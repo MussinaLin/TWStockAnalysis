@@ -28,6 +28,59 @@ class DataUnavailableError(RuntimeError):
     pass
 
 
+def _parse_roc_date(value: str) -> dt.date | None:
+    match = re.match(r"^(\\d{2,3})[/-](\\d{1,2})[/-](\\d{1,2})$", value.strip())
+    if not match:
+        return None
+    year = int(match.group(1)) + 1911
+    month = int(match.group(2))
+    day = int(match.group(3))
+    try:
+        return dt.date(year, month, day)
+    except ValueError:
+        return None
+
+
+def _parse_date_any(value: str) -> dt.date | None:
+    text = value.strip()
+    if not text:
+        return None
+
+    match = re.match(r"^(\\d{4})(\\d{2})(\\d{2})$", text)
+    if match:
+        try:
+            return dt.date(int(match.group(1)), int(match.group(2)), int(match.group(3)))
+        except ValueError:
+            return None
+
+    match = re.match(r"^(\\d{4})[/-](\\d{1,2})[/-](\\d{1,2})$", text)
+    if match:
+        try:
+            return dt.date(int(match.group(1)), int(match.group(2)), int(match.group(3)))
+        except ValueError:
+            return None
+
+    roc_date = _parse_roc_date(text)
+    if roc_date:
+        return roc_date
+
+    return None
+
+
+def _extract_first_date(text: str) -> dt.date | None:
+    patterns = [
+        r"(?<!\\d)(\\d{4}[/-]\\d{1,2}[/-]\\d{1,2})(?!\\d)",
+        r"(?<!\\d)(\\d{2,3}[/-]\\d{1,2}[/-]\\d{1,2})(?!\\d)",
+        r"(?<!\\d)(\\d{8})(?!\\d)",
+    ]
+    for pattern in patterns:
+        for match in re.finditer(pattern, text):
+            date_value = _parse_date_any(match.group(1))
+            if date_value:
+                return date_value
+    return None
+
+
 def _clean_number(value: Any) -> float | None:
     if value is None:
         return None
@@ -272,7 +325,7 @@ def fetch_twse_t86(session: requests.Session, date: dt.date) -> pd.DataFrame:
     return df
 
 
-def fetch_twse_stock_day_all(session: requests.Session) -> pd.DataFrame:
+def fetch_twse_stock_day_all(session: requests.Session) -> tuple[pd.DataFrame, dt.date | None]:
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     response = session.get(TWSE_STOCK_DAY_ALL_URL, timeout=30, verify=False)
     response.raise_for_status()
@@ -281,10 +334,24 @@ def fetch_twse_stock_day_all(session: requests.Session) -> pd.DataFrame:
         raise DataUnavailableError("TWSE STOCK_DAY_ALL 回傳格式異常")
     if not payload:
         raise DataUnavailableError("TWSE STOCK_DAY_ALL 無資料")
-    return pd.DataFrame(payload)
+    data_date = None
+    sample = payload[0]
+    if isinstance(sample, dict):
+        for key in ("Date", "date", "日期"):
+            if key in sample:
+                data_date = _parse_date_any(str(sample.get(key, "")))
+                if data_date:
+                    break
+        if data_date is None:
+            for key, value in sample.items():
+                if "date" in str(key).lower() or "日期" in str(key):
+                    data_date = _parse_date_any(str(value))
+                    if data_date:
+                        break
+    return pd.DataFrame(payload), data_date
 
 
-def fetch_twse_mi_index(session: requests.Session, date: dt.date) -> pd.DataFrame:
+def fetch_twse_mi_index(session: requests.Session, date: dt.date) -> tuple[pd.DataFrame, dt.date | None]:
     params = {
         "response": "json",
         "date": date.strftime("%Y%m%d"),
@@ -300,14 +367,27 @@ def fetch_twse_mi_index(session: requests.Session, date: dt.date) -> pd.DataFram
     if not isinstance(payload, dict):
         raise DataUnavailableError("TWSE MI_INDEX 回傳格式異常")
 
-    return _extract_twse_table(payload)
+    data_date = None
+    for key in ("date", "Date", "reportDate", "dataDate", "REPORTDATE", "DATADATE"):
+        if key in payload:
+            data_date = _parse_date_any(str(payload.get(key, "")))
+            if data_date:
+                break
+    if data_date is None:
+        for key, value in payload.items():
+            if "date" in str(key).lower():
+                data_date = _parse_date_any(str(value))
+                if data_date:
+                    break
+
+    return _extract_twse_table(payload), data_date
 
 
 def fetch_tpex_daily_quotes(
     session: requests.Session,
     date: dt.date | None = None,
     template: str | None = None,
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, dt.date | None]:
     if date is not None:
         if not template:
             raise DataUnavailableError(
@@ -331,15 +411,16 @@ def fetch_tpex_daily_quotes(
     if not text:
         raise DataUnavailableError("TPEX 日行情解碼失敗")
 
+    data_date = _extract_first_date(text)
     df = _read_tpex_csv(text)
-    return df
+    return df, data_date
 
 
 def fetch_tpex_3insti(
     session: requests.Session,
     date: dt.date | None = None,
     template: str | None = None,
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, dt.date | None]:
     if date is not None:
         if not template:
             raise DataUnavailableError(
@@ -363,5 +444,6 @@ def fetch_tpex_3insti(
     if not text:
         raise DataUnavailableError("TPEX 三大法人解碼失敗")
 
+    data_date = _extract_first_date(text)
     df = _read_tpex_csv(text)
-    return df
+    return df, data_date

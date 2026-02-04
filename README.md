@@ -71,6 +71,8 @@ tw-00987a-daily --backfill-start 2025-10-01 --backfill-end 2026-02-03
 
 - 檔案：`tw_00987A_daily.xlsx`
 - 工作表名稱：`YYYY-MM-DD`
+- 休市或資料未更新時，會寫入 `market_closed` 工作表
+  - 週末（六日）或 TWSE 資料無法取得時會判定休市並跳過寫入
 - 欄位（範例）：
   - `symbol`, `name`, `open`, `close`, `high`, `low`, `volume`
   - `foreign_net`, `trust_net`, `dealer_net`, `institutional_investors_net`

@@ -11,7 +11,13 @@ import requests
 from dotenv import load_dotenv
 
 from .config import AppConfig
-from .excel_utils import get_sheet_names, load_history, write_daily_sheet
+from .excel_utils import (
+    get_sheet_names,
+    load_history,
+    remove_sheet,
+    write_daily_sheet,
+    write_market_closed_sheet,
+)
 from .indicators import compute_macd, compute_rsi
 from .sources import (
     DataUnavailableError,
@@ -27,7 +33,7 @@ from .sources import (
     find_twse_ohlcv,
 )
 
-OUTPUT_FILE = Path("tw_00987A_daily.xlsx")
+OUTPUT_FILE = Path("tw_stock_daily.xlsx")
 TAIPEI_TZ = ZoneInfo("Asia/Taipei")
 DEFAULT_BACKFILL_DAYS = 120
 
@@ -344,23 +350,41 @@ def _prepare_tpex_sources(
     date: dt.date,
     config: AppConfig,
     today: dt.date,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    if date == today and not config.tpex_daily_quotes_url_template:
-        tpex_quotes_raw = fetch_tpex_daily_quotes(session, None, template=None)
+) -> tuple[pd.DataFrame | None, dt.date | None, pd.DataFrame | None, dt.date | None]:
+    used_quotes_template = not (date == today and not config.tpex_daily_quotes_url_template)
+    if not used_quotes_template:
+        tpex_quotes_raw, tpex_quotes_date = fetch_tpex_daily_quotes(
+            session, None, template=None
+        )
     else:
-        tpex_quotes_raw = fetch_tpex_daily_quotes(
+        tpex_quotes_raw, tpex_quotes_date = fetch_tpex_daily_quotes(
             session, date, template=config.tpex_daily_quotes_url_template
         )
 
-    if date == today and not config.tpex_3insti_url_template:
-        tpex_3insti_raw = fetch_tpex_3insti(session, None, template=None)
+    used_3insti_template = not (date == today and not config.tpex_3insti_url_template)
+    if not used_3insti_template:
+        tpex_3insti_raw, tpex_3insti_date = fetch_tpex_3insti(
+            session, None, template=None
+        )
     else:
-        tpex_3insti_raw = fetch_tpex_3insti(
+        tpex_3insti_raw, tpex_3insti_date = fetch_tpex_3insti(
             session, date, template=config.tpex_3insti_url_template
         )
+
     tpex_quotes = _prepare_tpex_quotes(tpex_quotes_raw)
     tpex_3insti = _prepare_tpex_3insti(tpex_3insti_raw)
-    return tpex_quotes, tpex_3insti
+
+    if tpex_quotes_date is None and used_quotes_template and not tpex_quotes.empty:
+        tpex_quotes_date = date
+    if tpex_3insti_date is None and used_3insti_template and not tpex_3insti.empty:
+        tpex_3insti_date = date
+
+    if tpex_quotes_date != date:
+        tpex_quotes = None
+    if tpex_3insti_date != date:
+        tpex_3insti = None
+
+    return tpex_quotes, tpex_quotes_date, tpex_3insti, tpex_3insti_date
 
 
 def _prepare_twse_sources(session: requests.Session, date: dt.date) -> pd.DataFrame:
@@ -553,6 +577,12 @@ def _run_for_date(
 ) -> bool:
     sheet_name = date.isoformat()
     print(f"開始處理日期 {sheet_name}")
+    if date.weekday() >= 5:
+        details = f"weekday={date.weekday()}"
+        print(f"{sheet_name} 週末休市，略過寫入")
+        write_market_closed_sheet(OUTPUT_FILE, date, "weekend", details)
+        remove_sheet(OUTPUT_FILE, sheet_name)
+        return False
     if skip_existing and sheet_name in sheet_names:
         print(f"已存在 {sheet_name}，略過回補。")
         return False
@@ -569,39 +599,108 @@ def _run_for_date(
         return False
 
     twse_day_all = None
+    twse_day_all_date = None
     if date == today:
         try:
-            twse_day_all_raw = fetch_twse_stock_day_all(session)
-            twse_day_all = _prepare_twse_day_all(twse_day_all_raw)
+            twse_day_all_raw, twse_day_all_date = fetch_twse_stock_day_all(session)
+            if twse_day_all_date is None:
+                print(f"{sheet_name} TWSE STOCK_DAY_ALL 無法解析日期，略過使用")
+            elif twse_day_all_date != date:
+                print(
+                    f"{sheet_name} TWSE STOCK_DAY_ALL 日期不匹配："
+                    f"{twse_day_all_date} != {date}，略過使用"
+                )
+            else:
+                twse_day_all = _prepare_twse_day_all(twse_day_all_raw)
         except DataUnavailableError as exc:
             print(f"{sheet_name} TWSE STOCK_DAY_ALL 取得失敗：{exc}")
             twse_day_all = None
+            twse_day_all_date = None
         except requests.RequestException as exc:
             print(f"{sheet_name} TWSE STOCK_DAY_ALL 網路連線失敗：{exc}")
             twse_day_all = None
+            twse_day_all_date = None
 
     twse_mi_index = None
+    twse_mi_index_date = None
     try:
-        twse_mi_index_raw = fetch_twse_mi_index(session, date)
-        twse_mi_index = _prepare_twse_mi_index(twse_mi_index_raw)
+        twse_mi_index_raw, twse_mi_index_date = fetch_twse_mi_index(session, date)
+        if twse_mi_index_date is None and not twse_mi_index_raw.empty and date == today:
+            print(f"{sheet_name} TWSE MI_INDEX 無法解析日期，假設為 {date}")
+            twse_mi_index_date = date
+        if twse_mi_index_date is None:
+            print(f"{sheet_name} TWSE MI_INDEX 無法解析日期，略過使用")
+        elif twse_mi_index_date != date:
+            print(
+                f"{sheet_name} TWSE MI_INDEX 日期不匹配："
+                f"{twse_mi_index_date} != {date}，略過使用"
+            )
+        else:
+            twse_mi_index = _prepare_twse_mi_index(twse_mi_index_raw)
     except DataUnavailableError as exc:
         print(f"{sheet_name} TWSE MI_INDEX 取得失敗：{exc}")
         twse_mi_index = None
+        twse_mi_index_date = None
     except requests.RequestException as exc:
         print(f"{sheet_name} TWSE MI_INDEX 網路連線失敗：{exc}")
         twse_mi_index = None
+        twse_mi_index_date = None
+
+    twse_confirmed = (
+        (twse_day_all_date == date)
+        or (twse_mi_index_date == date)
+        or (not twse_3insti.empty)
+    )
+    if not twse_confirmed:
+        details = (
+            f"twse_day_all={twse_day_all_date}, "
+            f"twse_mi_index={twse_mi_index_date}, "
+            f"twse_t86_rows={len(twse_3insti)}"
+        )
+        print(f"{sheet_name} TWSE 資料不足，視為休市，略過寫入")
+        write_market_closed_sheet(OUTPUT_FILE, date, "twse_unavailable", details)
+        remove_sheet(OUTPUT_FILE, sheet_name)
+        return False
 
     try:
-        tpex_quotes, tpex_3insti = _prepare_tpex_sources(session, date, config, today)
+        (
+            tpex_quotes,
+            tpex_quotes_date,
+            tpex_3insti,
+            tpex_3insti_date,
+        ) = _prepare_tpex_sources(session, date, config, today)
+        if tpex_quotes_date is None:
+            print(f"{sheet_name} TPEX 日行情無法解析日期，略過使用")
+        elif tpex_quotes_date != date:
+            print(
+                f"{sheet_name} TPEX 日行情日期不匹配："
+                f"{tpex_quotes_date} != {date}，略過使用"
+            )
+        if tpex_3insti_date is None:
+            print(f"{sheet_name} TPEX 三大法人無法解析日期，略過使用")
+        elif tpex_3insti_date != date:
+            print(
+                f"{sheet_name} TPEX 三大法人日期不匹配："
+                f"{tpex_3insti_date} != {date}，略過使用"
+            )
     except DataUnavailableError as exc:
         print(f"{sheet_name} TPEX 資料尚未公告或取得失敗：{exc}")
-        tpex_quotes = pd.DataFrame(columns=["symbol", "open", "close"])
-        tpex_3insti = pd.DataFrame(
-            columns=["symbol", "foreign_net", "trust_net", "dealer_net"]
-        )
+        tpex_quotes = None
+        tpex_quotes_date = None
+        tpex_3insti = None
+        tpex_3insti_date = None
     except requests.RequestException as exc:
         print(f"{sheet_name} TPEX 網路連線失敗：{exc}")
         return False
+
+    if tpex_quotes is None:
+        tpex_quotes = pd.DataFrame(
+            columns=["symbol", "name", "open", "close", "high", "low", "volume"]
+        )
+    if tpex_3insti is None:
+        tpex_3insti = pd.DataFrame(
+            columns=["symbol", "name", "foreign_net", "trust_net", "dealer_net"]
+        )
 
     output_df = _build_daily_rows(
         session=session,

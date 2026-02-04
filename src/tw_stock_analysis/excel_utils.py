@@ -4,6 +4,7 @@ import datetime as dt
 from pathlib import Path
 
 import pandas as pd
+from openpyxl import load_workbook
 
 
 def load_history(path: Path) -> dict[str, pd.Series]:
@@ -56,3 +57,54 @@ def write_daily_sheet(path: Path, date: dt.date, df: pd.DataFrame) -> None:
     else:
         with pd.ExcelWriter(path, engine="openpyxl", mode="w") as writer:
             df.to_excel(writer, sheet_name=sheet_name, index=False)
+
+
+def write_market_closed_sheet(
+    path: Path, date: dt.date, reason: str, details: str
+) -> None:
+    sheet_name = "market_closed"
+    row = {"date": date.isoformat(), "reason": reason, "details": details}
+
+    if path.exists():
+        xls = pd.ExcelFile(path)
+        if sheet_name in xls.sheet_names:
+            df = xls.parse(sheet_name)
+        else:
+            df = pd.DataFrame(columns=["date", "reason", "details"])
+    else:
+        df = pd.DataFrame(columns=["date", "reason", "details"])
+
+    if "date" not in df.columns:
+        df["date"] = None
+    if "reason" not in df.columns:
+        df["reason"] = None
+    if "details" not in df.columns:
+        df["details"] = None
+
+    df = df[df["date"].astype(str) != row["date"]]
+    df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
+    df["_date_sort"] = pd.to_datetime(df["date"], errors="coerce")
+    df = df.sort_values("_date_sort").drop(columns="_date_sort")
+
+    if path.exists():
+        with pd.ExcelWriter(
+            path,
+            engine="openpyxl",
+            mode="a",
+            if_sheet_exists="replace",
+        ) as writer:
+            df.to_excel(writer, sheet_name=sheet_name, index=False)
+    else:
+        with pd.ExcelWriter(path, engine="openpyxl", mode="w") as writer:
+            df.to_excel(writer, sheet_name=sheet_name, index=False)
+
+
+def remove_sheet(path: Path, sheet_name: str) -> None:
+    if not path.exists():
+        return
+    workbook = load_workbook(path)
+    if sheet_name not in workbook.sheetnames:
+        return
+    worksheet = workbook[sheet_name]
+    workbook.remove(worksheet)
+    workbook.save(path)
