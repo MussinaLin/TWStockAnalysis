@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import re
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -9,6 +10,7 @@ import pandas as pd
 import requests
 from dotenv import load_dotenv
 
+from .config import AppConfig
 from .excel_utils import get_sheet_names, load_history, write_daily_sheet
 from .indicators import compute_macd, compute_rsi
 from .sources import (
@@ -28,20 +30,28 @@ TAIPEI_TZ = ZoneInfo("Asia/Taipei")
 DEFAULT_BACKFILL_DAYS = 120
 
 
+def _normalize_col(text: str) -> str:
+    cleaned = text.replace("\ufeff", "")
+    cleaned = re.sub(r"\s+", "", cleaned)
+    return cleaned
+
+
 def _find_column(df: pd.DataFrame, keywords: list[str]) -> str | None:
+    normalized_keywords = [_normalize_col(keyword) for keyword in keywords]
     for col in df.columns:
-        text = str(col)
-        if all(keyword in text for keyword in keywords):
+        text = _normalize_col(str(col))
+        if all(keyword in text for keyword in normalized_keywords):
             return col
     return None
 
 
 def _prepare_tpex_quotes(df: pd.DataFrame) -> pd.DataFrame:
     symbol_col = _find_column(df, ["證券代號"]) or _find_column(df, ["代號"])
-    open_col = _find_column(df, ["開盤"])
-    close_col = _find_column(df, ["收盤"])
+    open_col = _find_column(df, ["開盤"]) or _find_column(df, ["開盤價"])
+    close_col = _find_column(df, ["收盤"]) or _find_column(df, ["收盤價"])
     if not symbol_col or not open_col or not close_col:
-        raise DataUnavailableError("TPEX 行情欄位解析失敗")
+        columns = ", ".join([str(col) for col in df.columns[:10]])
+        raise DataUnavailableError(f"TPEX 行情欄位解析失敗，欄位={columns}")
 
     temp = df[[symbol_col, open_col, close_col]].copy()
     temp.columns = ["symbol", "open", "close"]
@@ -129,9 +139,25 @@ def _build_date_range(start: dt.date, end: dt.date) -> list[dt.date]:
     return [start + dt.timedelta(days=offset) for offset in range(days + 1)]
 
 
-def _prepare_tpex_sources(session: requests.Session, date: dt.date) -> tuple[pd.DataFrame, pd.DataFrame]:
-    tpex_quotes_raw = fetch_tpex_daily_quotes(session, date)
-    tpex_3insti_raw = fetch_tpex_3insti(session, date)
+def _prepare_tpex_sources(
+    session: requests.Session,
+    date: dt.date,
+    config: AppConfig,
+    today: dt.date,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if date == today and not config.tpex_daily_quotes_url_template:
+        tpex_quotes_raw = fetch_tpex_daily_quotes(session, None, template=None)
+    else:
+        tpex_quotes_raw = fetch_tpex_daily_quotes(
+            session, date, template=config.tpex_daily_quotes_url_template
+        )
+
+    if date == today and not config.tpex_3insti_url_template:
+        tpex_3insti_raw = fetch_tpex_3insti(session, None, template=None)
+    else:
+        tpex_3insti_raw = fetch_tpex_3insti(
+            session, date, template=config.tpex_3insti_url_template
+        )
     tpex_quotes = _prepare_tpex_quotes(tpex_quotes_raw)
     tpex_3insti = _prepare_tpex_3insti(tpex_3insti_raw)
     return tpex_quotes, tpex_3insti
@@ -241,6 +267,8 @@ def _run_for_date(
     history: dict[str, pd.Series],
     sheet_names: set[str],
     twse_month_cache: dict[tuple[str, dt.date], pd.DataFrame],
+    config: AppConfig,
+    today: dt.date,
     skip_existing: bool = False,
 ) -> bool:
     sheet_name = date.isoformat()
@@ -260,7 +288,7 @@ def _run_for_date(
         return False
 
     try:
-        tpex_quotes, tpex_3insti = _prepare_tpex_sources(session, date)
+        tpex_quotes, tpex_3insti = _prepare_tpex_sources(session, date, config, today)
     except DataUnavailableError as exc:
         print(f"{sheet_name} TPEX 資料尚未公告或取得失敗：{exc}")
         tpex_quotes = pd.DataFrame(columns=["symbol", "open", "close"])
@@ -298,6 +326,7 @@ def _run_for_date(
 
 def main() -> None:
     load_dotenv()
+    config = AppConfig.from_env()
     args = _parse_args()
     today = dt.datetime.now(TAIPEI_TZ).date()
     target_date = _parse_date(args.date) if args.date else today
@@ -333,6 +362,8 @@ def main() -> None:
                 history=history,
                 sheet_names=sheet_names,
                 twse_month_cache=twse_month_cache,
+                config=config,
+                today=today,
                 skip_existing=True,
             )
         ran_backfill = True
@@ -356,6 +387,8 @@ def main() -> None:
                 history=history,
                 sheet_names=sheet_names,
                 twse_month_cache=twse_month_cache,
+                config=config,
+                today=today,
                 skip_existing=True,
             )
         ran_backfill = True
@@ -368,6 +401,8 @@ def main() -> None:
             history=history,
             sheet_names=sheet_names,
             twse_month_cache=twse_month_cache,
+            config=config,
+            today=today,
             skip_existing=False,
         )
 

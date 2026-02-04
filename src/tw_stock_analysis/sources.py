@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import datetime as dt
 import io
-import os
 import re
 import urllib3
 from typing import Any
@@ -21,8 +20,6 @@ TPEX_3INSTI_URL = (
     "https://www.tpex.org.tw/web/stock/3insti/daily_trade/"
     "3itrade_hedge_result.php?l=zh-tw&se=EW&t=D&o=data"
 )
-TPEX_DAILY_QUOTES_URL_TEMPLATE = os.getenv("TPEX_DAILY_QUOTES_URL_TEMPLATE")
-TPEX_3INSTI_URL_TEMPLATE = os.getenv("TPEX_3INSTI_URL_TEMPLATE")
 
 
 class DataUnavailableError(RuntimeError):
@@ -31,6 +28,8 @@ class DataUnavailableError(RuntimeError):
 
 def _clean_number(value: Any) -> float | None:
     if value is None:
+        return None
+    if isinstance(value, float) and pd.isna(value):
         return None
     if isinstance(value, (int, float)):
         return float(value)
@@ -46,6 +45,8 @@ def _clean_number(value: Any) -> float | None:
 def _clean_int(value: Any) -> int | None:
     number = _clean_number(value)
     if number is None:
+        return None
+    if pd.isna(number):
         return None
     return int(round(number))
 
@@ -66,6 +67,35 @@ def _date_to_roc(date: dt.date) -> str:
 
 def _format_template(template: str, date: dt.date) -> str:
     return template.format(date=date.isoformat(), roc=_date_to_roc(date))
+
+
+def _read_tpex_csv(text: str) -> pd.DataFrame:
+    lines = [line for line in text.splitlines() if line.strip()]
+    if not lines:
+        raise DataUnavailableError("TPEX 回傳內容為空。")
+
+    joined = "\n".join(lines)
+    lower = joined.lower()
+    if "<html" in lower or "<!doctype" in lower:
+        raise DataUnavailableError("TPEX 回傳非 CSV（可能為網頁內容）。")
+    if "查無資料" in joined or "沒有資料" in joined:
+        raise DataUnavailableError("TPEX 查無資料。")
+
+    header_idx = None
+    for idx, line in enumerate(lines):
+        if "," not in line:
+            continue
+        if line.lstrip().startswith(("註", "說明")):
+            continue
+        if ("代號" in line and "名稱" in line) or ("證券代號" in line and "收盤" in line):
+            header_idx = idx
+            break
+
+    if header_idx is None:
+        raise DataUnavailableError("TPEX CSV 解析失敗，未找到表頭。")
+
+    csv_text = "\n".join(lines[header_idx:])
+    return pd.read_csv(io.StringIO(csv_text))
 
 
 def fetch_00987a_holdings(session: requests.Session) -> pd.DataFrame:
@@ -136,7 +166,8 @@ def fetch_twse_stock_day(
         "date": month_start.strftime("%Y%m%d"),
         "stockNo": stock_no,
     }
-    response = session.get(TWSE_STOCK_DAY_URL, params=params, timeout=30)
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    response = session.get(TWSE_STOCK_DAY_URL, params=params, timeout=30, verify=False)
     response.raise_for_status()
     payload = response.json()
     if payload.get("stat") != "OK":
@@ -172,7 +203,8 @@ def fetch_twse_t86(session: requests.Session, date: dt.date) -> pd.DataFrame:
         "date": date.strftime("%Y%m%d"),
         "selectType": "ALL",
     }
-    response = session.get(TWSE_T86_URL, params=params, timeout=30)
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    response = session.get(TWSE_T86_URL, params=params, timeout=30, verify=False)
     response.raise_for_status()
     payload = response.json()
     if payload.get("stat") != "OK":
@@ -187,17 +219,22 @@ def fetch_twse_t86(session: requests.Session, date: dt.date) -> pd.DataFrame:
     return df
 
 
-def fetch_tpex_daily_quotes(session: requests.Session, date: dt.date | None = None) -> pd.DataFrame:
+def fetch_tpex_daily_quotes(
+    session: requests.Session,
+    date: dt.date | None = None,
+    template: str | None = None,
+) -> pd.DataFrame:
     if date is not None:
-        if not TPEX_DAILY_QUOTES_URL_TEMPLATE:
+        if not template:
             raise DataUnavailableError(
                 "未設定 TPEX_DAILY_QUOTES_URL_TEMPLATE，無法回補指定日期上櫃行情。"
             )
-        url = _format_template(TPEX_DAILY_QUOTES_URL_TEMPLATE, date)
+        url = _format_template(template, date)
     else:
         url = TPEX_DAILY_QUOTES_URL
 
-    response = session.get(url, timeout=30)
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    response = session.get(url, timeout=30, verify=False)
     response.raise_for_status()
 
     content = response.content
@@ -210,21 +247,26 @@ def fetch_tpex_daily_quotes(session: requests.Session, date: dt.date | None = No
     if not text:
         raise DataUnavailableError("TPEX 日行情解碼失敗")
 
-    df = pd.read_csv(io.StringIO(text))
+    df = _read_tpex_csv(text)
     return df
 
 
-def fetch_tpex_3insti(session: requests.Session, date: dt.date | None = None) -> pd.DataFrame:
+def fetch_tpex_3insti(
+    session: requests.Session,
+    date: dt.date | None = None,
+    template: str | None = None,
+) -> pd.DataFrame:
     if date is not None:
-        if not TPEX_3INSTI_URL_TEMPLATE:
+        if not template:
             raise DataUnavailableError(
                 "未設定 TPEX_3INSTI_URL_TEMPLATE，無法回補指定日期上櫃三大法人。"
             )
-        url = _format_template(TPEX_3INSTI_URL_TEMPLATE, date)
+        url = _format_template(template, date)
     else:
         url = TPEX_3INSTI_URL
 
-    response = session.get(url, timeout=30)
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    response = session.get(url, timeout=30, verify=False)
     response.raise_for_status()
 
     content = response.content
@@ -237,5 +279,5 @@ def fetch_tpex_3insti(session: requests.Session, date: dt.date | None = None) ->
     if not text:
         raise DataUnavailableError("TPEX 三大法人解碼失敗")
 
-    df = pd.read_csv(io.StringIO(text))
+    df = _read_tpex_csv(text)
     return df
