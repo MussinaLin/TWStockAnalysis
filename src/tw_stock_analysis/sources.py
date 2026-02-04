@@ -22,6 +22,12 @@ TPEX_3INSTI_URL = (
     "https://www.tpex.org.tw/web/stock/3insti/daily_trade/"
     "3itrade_hedge_result.php?l=zh-tw&se=EW&t=D&o=data"
 )
+TPEX_DAILY_QUOTES_V2_URL = (
+    "https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes"
+)
+TPEX_3INSTI_V2_URL = (
+    "https://www.tpex.org.tw/www/zh-tw/insti/dailyTrade"
+)
 
 
 class DataUnavailableError(RuntimeError):
@@ -29,7 +35,7 @@ class DataUnavailableError(RuntimeError):
 
 
 def _parse_roc_date(value: str) -> dt.date | None:
-    match = re.match(r"^(\\d{2,3})[/-](\\d{1,2})[/-](\\d{1,2})$", value.strip())
+    match = re.match(r"^(\d{2,3})[/-](\d{1,2})[/-](\d{1,2})$", value.strip())
     if not match:
         return None
     year = int(match.group(1)) + 1911
@@ -46,14 +52,14 @@ def _parse_date_any(value: str) -> dt.date | None:
     if not text:
         return None
 
-    match = re.match(r"^(\\d{4})(\\d{2})(\\d{2})$", text)
+    match = re.match(r"^(\d{4})(\d{2})(\d{2})$", text)
     if match:
         try:
             return dt.date(int(match.group(1)), int(match.group(2)), int(match.group(3)))
         except ValueError:
             return None
 
-    match = re.match(r"^(\\d{4})[/-](\\d{1,2})[/-](\\d{1,2})$", text)
+    match = re.match(r"^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$", text)
     if match:
         try:
             return dt.date(int(match.group(1)), int(match.group(2)), int(match.group(3)))
@@ -69,9 +75,9 @@ def _parse_date_any(value: str) -> dt.date | None:
 
 def _extract_first_date(text: str) -> dt.date | None:
     patterns = [
-        r"(?<!\\d)(\\d{4}[/-]\\d{1,2}[/-]\\d{1,2})(?!\\d)",
-        r"(?<!\\d)(\\d{2,3}[/-]\\d{1,2}[/-]\\d{1,2})(?!\\d)",
-        r"(?<!\\d)(\\d{8})(?!\\d)",
+        r"(?<!\d)(\d{4}[/-]\d{1,2}[/-]\d{1,2})(?!\d)",
+        r"(?<!\d)(\d{2,3}[/-]\d{1,2}[/-]\d{1,2})(?!\d)",
+        r"(?<!\d)(\d{8})(?!\d)",
     ]
     for pattern in patterns:
         for match in re.finditer(pattern, text):
@@ -446,4 +452,81 @@ def fetch_tpex_3insti(
 
     data_date = _extract_first_date(text)
     df = _read_tpex_csv(text)
+    return df, data_date
+
+
+def _extract_tpex_v2_table(
+    payload: dict, title_keyword: str = "上櫃股票"
+) -> pd.DataFrame:
+    """Extract DataFrame from new TPEX JSON API (tables/fields/data format)."""
+    tables = payload.get("tables", [])
+    for table in tables:
+        if not isinstance(table, dict):
+            continue
+        title = table.get("title", "")
+        fields = table.get("fields", [])
+        data = table.get("data", [])
+        if title_keyword in title and fields and data:
+            return pd.DataFrame(data, columns=fields)
+    raise DataUnavailableError(f"TPEX V2 找不到包含「{title_keyword}」的表格。")
+
+
+def fetch_tpex_daily_quotes_v2(
+    session: requests.Session,
+    date: dt.date,
+) -> tuple[pd.DataFrame, dt.date | None]:
+    """Fetch TPEX daily quotes using the new API that supports historical queries."""
+    roc = _date_to_roc(date)
+    params = {"date": roc, "response": "json"}
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    response = session.get(TPEX_DAILY_QUOTES_V2_URL, params=params, timeout=30, verify=False)
+    response.raise_for_status()
+    payload = response.json()
+
+    if payload.get("stat") not in {None, "ok", "OK"}:
+        raise DataUnavailableError(payload.get("stat") or "TPEX V2 行情回傳異常")
+
+    data_date = _parse_date_any(str(payload.get("date", "")))
+    df = _extract_tpex_v2_table(payload, "上櫃股票")
+    return df, data_date
+
+
+def fetch_tpex_3insti_v2(
+    session: requests.Session,
+    date: dt.date,
+) -> tuple[pd.DataFrame, dt.date | None]:
+    """Fetch TPEX 3-institutional-investors data using the new API."""
+    roc = _date_to_roc(date)
+    params = {"date": roc, "response": "json", "type": "Daily", "se": "EW"}
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    response = session.get(TPEX_3INSTI_V2_URL, params=params, timeout=30, verify=False)
+    response.raise_for_status()
+    payload = response.json()
+
+    if payload.get("stat") not in {None, "ok", "OK"}:
+        raise DataUnavailableError(payload.get("stat") or "TPEX V2 三大法人回傳異常")
+
+    data_date = _parse_date_any(str(payload.get("date", "")))
+    df = _extract_tpex_v2_table(payload, "三大法人")
+
+    # The fields have duplicated names (買進股數/賣出股數/買賣超股數 repeated for each
+    # institutional category). Rename by position:
+    #   [0] 代號, [1] 名稱,
+    #   [2-4] 外資及陸資(不含自營商),
+    #   [5-7] 外資自營商,
+    #   [8-10] 外資及陸資合計,
+    #   [11-13] 投信,
+    #   [14-16] 自營商(自行買賣),
+    #   [17-19] 自營商(避險),
+    #   [20-22] 自營商合計,
+    #   [23] 三大法人合計
+    if len(df.columns) >= 24:
+        cols = list(df.columns)
+        cols[4] = "外資及陸資買賣超股數"
+        cols[10] = "外資合計買賣超股數"
+        cols[13] = "投信買賣超股數"
+        cols[22] = "自營商合計買賣超股數"
+        cols[23] = "三大法人買賣超股數合計"
+        df.columns = cols
+
     return df, data_date

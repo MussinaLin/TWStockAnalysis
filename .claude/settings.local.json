@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(tree:*)",
+      "Bash(source .venv/bin/activate)",
+      "Bash(tw-00987a-daily:*)"
+    ]
+  }
+}

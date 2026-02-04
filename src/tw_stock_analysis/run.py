@@ -25,7 +25,9 @@ from .sources import (
     _clean_number,
     fetch_00987a_holdings,
     fetch_tpex_3insti,
+    fetch_tpex_3insti_v2,
     fetch_tpex_daily_quotes,
+    fetch_tpex_daily_quotes_v2,
     fetch_twse_stock_day_all,
     fetch_twse_stock_day,
     fetch_twse_mi_index,
@@ -351,33 +353,12 @@ def _prepare_tpex_sources(
     config: AppConfig,
     today: dt.date,
 ) -> tuple[pd.DataFrame | None, dt.date | None, pd.DataFrame | None, dt.date | None]:
-    used_quotes_template = not (date == today and not config.tpex_daily_quotes_url_template)
-    if not used_quotes_template:
-        tpex_quotes_raw, tpex_quotes_date = fetch_tpex_daily_quotes(
-            session, None, template=None
-        )
-    else:
-        tpex_quotes_raw, tpex_quotes_date = fetch_tpex_daily_quotes(
-            session, date, template=config.tpex_daily_quotes_url_template
-        )
-
-    used_3insti_template = not (date == today and not config.tpex_3insti_url_template)
-    if not used_3insti_template:
-        tpex_3insti_raw, tpex_3insti_date = fetch_tpex_3insti(
-            session, None, template=None
-        )
-    else:
-        tpex_3insti_raw, tpex_3insti_date = fetch_tpex_3insti(
-            session, date, template=config.tpex_3insti_url_template
-        )
-
+    # Use V2 JSON API (supports historical queries natively)
+    tpex_quotes_raw, tpex_quotes_date = fetch_tpex_daily_quotes_v2(session, date)
     tpex_quotes = _prepare_tpex_quotes(tpex_quotes_raw)
-    tpex_3insti = _prepare_tpex_3insti(tpex_3insti_raw)
 
-    if tpex_quotes_date is None and used_quotes_template and not tpex_quotes.empty:
-        tpex_quotes_date = date
-    if tpex_3insti_date is None and used_3insti_template and not tpex_3insti.empty:
-        tpex_3insti_date = date
+    tpex_3insti_raw, tpex_3insti_date = fetch_tpex_3insti_v2(session, date)
+    tpex_3insti = _prepare_tpex_3insti(tpex_3insti_raw)
 
     if tpex_quotes_date != date:
         tpex_quotes = None
