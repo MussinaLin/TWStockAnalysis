@@ -73,7 +73,7 @@ tw-00987a-daily --backfill-start 2025-10-01 --backfill-end 2026-02-03
 - 工作表名稱：`YYYY-MM-DD`
 - 欄位（範例）：
   - `symbol`, `name`, `open`, `close`
-  - `foreign_net`, `trust_net`, `dealer_net`
+  - `foreign_net`, `trust_net`, `dealer_net`, `institutional_investors_net`
   - `rsi_14`, `macd`, `macd_signal`, `macd_hist`
 
 ## 上櫃歷史回補設定

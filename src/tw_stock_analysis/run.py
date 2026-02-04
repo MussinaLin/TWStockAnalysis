@@ -288,6 +288,11 @@ def _build_daily_rows(
                 "foreign_net": foreign_net,
                 "trust_net": trust_net,
                 "dealer_net": dealer_net,
+                "institutional_investors_net": (
+                    None
+                    if foreign_net is None and trust_net is None and dealer_net is None
+                    else (foreign_net or 0) + (trust_net or 0) + (dealer_net or 0)
+                ),
                 "rsi_14": rsi,
                 "macd": macd_value,
                 "macd_signal": macd_signal_value,

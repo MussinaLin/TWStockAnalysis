@@ -133,7 +133,9 @@ def fetch_00987a_holdings(session: requests.Session) -> pd.DataFrame:
             symbol_raw = str(row.get(symbol_col, "")).strip()
             name = str(row.get(name_col, "")).strip()
             match = re.search(r"(\d{4,6})", symbol_raw)
-            symbol = match.group(1) if match else symbol_raw
+            if not match:
+                continue
+            symbol = match.group(1)
             if not symbol:
                 continue
             name = re.sub(r"\s+", " ", name)
