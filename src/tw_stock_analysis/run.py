@@ -20,6 +20,7 @@ from .sources import (
     fetch_00987a_holdings,
     fetch_tpex_3insti,
     fetch_tpex_daily_quotes,
+    fetch_twse_stock_day_all,
     fetch_twse_stock_day,
     fetch_twse_t86,
     find_twse_open_close,
@@ -33,7 +34,7 @@ DEFAULT_BACKFILL_DAYS = 120
 def _normalize_col(text: str) -> str:
     cleaned = text.replace("\ufeff", "")
     cleaned = re.sub(r"\s+", "", cleaned)
-    return cleaned
+    return cleaned.lower()
 
 
 def _find_column(df: pd.DataFrame, keywords: list[str]) -> str | None:
@@ -125,6 +126,43 @@ def _prepare_twse_3insti(df: pd.DataFrame) -> pd.DataFrame:
     return temp
 
 
+def _prepare_twse_day_all(df: pd.DataFrame) -> pd.DataFrame:
+    symbol_col = _find_column(df, ["code"]) or _find_column(df, ["證券代號"]) or _find_column(df, ["代號"])
+    name_col = _find_column(df, ["name"]) or _find_column(df, ["證券名稱"]) or _find_column(df, ["名稱"])
+    open_col = (
+        _find_column(df, ["openingprice"])
+        or _find_column(df, ["open"])
+        or _find_column(df, ["開盤價"])
+        or _find_column(df, ["開盤"])
+    )
+    close_col = (
+        _find_column(df, ["closingprice"])
+        or _find_column(df, ["close"])
+        or _find_column(df, ["收盤價"])
+        or _find_column(df, ["收盤"])
+    )
+
+    if not symbol_col or not open_col or not close_col:
+        raise DataUnavailableError("TWSE STOCK_DAY_ALL 欄位解析失敗")
+
+    use_cols = [symbol_col, open_col, close_col]
+    if name_col:
+        use_cols.insert(1, name_col)
+
+    temp = df[use_cols].copy()
+    if name_col:
+        temp.columns = ["symbol", "name", "open", "close"]
+        temp["name"] = temp["name"].astype(str).str.strip().replace({"nan": ""})
+    else:
+        temp.columns = ["symbol", "open", "close"]
+        temp["name"] = ""
+
+    temp["symbol"] = temp["symbol"].astype(str).str.strip()
+    temp["open"] = temp["open"].map(_clean_number)
+    temp["close"] = temp["close"].map(_clean_number)
+    return temp
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="00987A 成份股每日分析")
     parser.add_argument(
@@ -204,6 +242,7 @@ def _build_daily_rows(
     holdings: pd.DataFrame,
     history: dict[str, pd.Series],
     twse_3insti: pd.DataFrame,
+    twse_day_all: pd.DataFrame | None,
     tpex_quotes: pd.DataFrame,
     tpex_3insti: pd.DataFrame,
     twse_month_cache: dict[tuple[str, dt.date], pd.DataFrame],
@@ -221,21 +260,30 @@ def _build_daily_rows(
         trust_net = None
         dealer_net = None
 
-        month_start = date.replace(day=1)
-        cache_key = (symbol, month_start)
-        twse_day = None
-        if cache_key in twse_month_cache:
-            twse_day = twse_month_cache[cache_key]
-        else:
-            try:
-                twse_day = fetch_twse_stock_day(session, symbol, date)
-            except DataUnavailableError:
-                twse_day = None
-            if twse_day is not None:
-                twse_month_cache[cache_key] = twse_day
+        if twse_day_all is not None:
+            row_all = twse_day_all.loc[twse_day_all["symbol"] == symbol]
+            if not row_all.empty:
+                open_price = row_all.iloc[0]["open"]
+                close_price = row_all.iloc[0]["close"]
+                if not name and "name" in row_all.columns:
+                    name = str(row_all.iloc[0].get("name", "")).strip()
 
-        if twse_day is not None:
-            open_price, close_price = find_twse_open_close(twse_day, date)
+        if open_price is None and close_price is None:
+            month_start = date.replace(day=1)
+            cache_key = (symbol, month_start)
+            twse_day = None
+            if cache_key in twse_month_cache:
+                twse_day = twse_month_cache[cache_key]
+            else:
+                try:
+                    twse_day = fetch_twse_stock_day(session, symbol, date)
+                except DataUnavailableError:
+                    twse_day = None
+                if twse_day is not None:
+                    twse_month_cache[cache_key] = twse_day
+
+            if twse_day is not None:
+                open_price, close_price = find_twse_open_close(twse_day, date)
 
         if open_price is None and close_price is None:
             row = tpex_quotes.loc[tpex_quotes["symbol"] == symbol]
@@ -330,6 +378,18 @@ def _run_for_date(
         print(f"{sheet_name} TWSE 網路連線失敗：{exc}")
         return False
 
+    twse_day_all = None
+    if date == today:
+        try:
+            twse_day_all_raw = fetch_twse_stock_day_all(session)
+            twse_day_all = _prepare_twse_day_all(twse_day_all_raw)
+        except DataUnavailableError as exc:
+            print(f"{sheet_name} TWSE STOCK_DAY_ALL 取得失敗：{exc}")
+            twse_day_all = None
+        except requests.RequestException as exc:
+            print(f"{sheet_name} TWSE STOCK_DAY_ALL 網路連線失敗：{exc}")
+            twse_day_all = None
+
     try:
         tpex_quotes, tpex_3insti = _prepare_tpex_sources(session, date, config, today)
     except DataUnavailableError as exc:
@@ -348,6 +408,7 @@ def _run_for_date(
         holdings=holdings,
         history=history,
         twse_3insti=twse_3insti,
+        twse_day_all=twse_day_all,
         tpex_quotes=tpex_quotes,
         tpex_3insti=tpex_3insti,
         twse_month_cache=twse_month_cache,

@@ -12,6 +12,7 @@ import requests
 HOLDINGS_URL = "https://www.tsit.com.tw/ETF/Home/ETFSeriesDetail/00987A"
 TWSE_STOCK_DAY_URL = "https://www.twse.com.tw/exchangeReport/STOCK_DAY"
 TWSE_T86_URL = "https://www.twse.com.tw/fund/T86"
+TWSE_STOCK_DAY_ALL_URL = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
 TPEX_DAILY_QUOTES_URL = (
     "https://www.tpex.org.tw/web/stock/aftertrading/DAILY_CLOSE_quotes/"
     "stk_quote_result.php?l=zh-tw&o=data"
@@ -219,6 +220,18 @@ def fetch_twse_t86(session: requests.Session, date: dt.date) -> pd.DataFrame:
 
     df = pd.DataFrame(data, columns=fields)
     return df
+
+
+def fetch_twse_stock_day_all(session: requests.Session) -> pd.DataFrame:
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    response = session.get(TWSE_STOCK_DAY_ALL_URL, timeout=30, verify=False)
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, list):
+        raise DataUnavailableError("TWSE STOCK_DAY_ALL 回傳格式異常")
+    if not payload:
+        raise DataUnavailableError("TWSE STOCK_DAY_ALL 無資料")
+    return pd.DataFrame(payload)
 
 
 def fetch_tpex_daily_quotes(

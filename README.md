@@ -103,6 +103,7 @@ export TPEX_3INSTI_URL_TEMPLATE='...{date}...'
 
 - 00987A 成份股：台新投信 ETF 詳細頁面
 - 上市股票日資料（開收盤）：TWSE 股票日成交資訊
+- 上市股票日資料（當日）：TWSE OpenAPI STOCK_DAY_ALL
 - 上市三大法人：TWSE 三大法人買賣超 (T86)
 - 上櫃日行情：data.gov.tw 上櫃股票行情資料集
 - 上櫃三大法人：data.gov.tw 上櫃三大法人買賣超日報（股）明細
