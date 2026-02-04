@@ -47,14 +47,24 @@ def _find_column(df: pd.DataFrame, keywords: list[str]) -> str | None:
 
 def _prepare_tpex_quotes(df: pd.DataFrame) -> pd.DataFrame:
     symbol_col = _find_column(df, ["證券代號"]) or _find_column(df, ["代號"])
+    name_col = _find_column(df, ["名稱"])
     open_col = _find_column(df, ["開盤"]) or _find_column(df, ["開盤價"])
     close_col = _find_column(df, ["收盤"]) or _find_column(df, ["收盤價"])
     if not symbol_col or not open_col or not close_col:
         columns = ", ".join([str(col) for col in df.columns[:10]])
         raise DataUnavailableError(f"TPEX 行情欄位解析失敗，欄位={columns}")
 
-    temp = df[[symbol_col, open_col, close_col]].copy()
-    temp.columns = ["symbol", "open", "close"]
+    use_cols = [symbol_col, open_col, close_col]
+    if name_col:
+        use_cols.insert(1, name_col)
+
+    temp = df[use_cols].copy()
+    if name_col:
+        temp.columns = ["symbol", "name", "open", "close"]
+        temp["name"] = temp["name"].astype(str).str.strip().replace({"nan": ""})
+    else:
+        temp.columns = ["symbol", "open", "close"]
+        temp["name"] = ""
     temp["symbol"] = temp["symbol"].astype(str).str.strip()
     temp["open"] = temp["open"].map(_clean_number)
     temp["close"] = temp["close"].map(_clean_number)
@@ -63,14 +73,24 @@ def _prepare_tpex_quotes(df: pd.DataFrame) -> pd.DataFrame:
 
 def _prepare_tpex_3insti(df: pd.DataFrame) -> pd.DataFrame:
     symbol_col = _find_column(df, ["證券代號"]) or _find_column(df, ["代號"])
+    name_col = _find_column(df, ["名稱"])
     foreign_col = _find_column(df, ["外資", "買賣超"])
     trust_col = _find_column(df, ["投信", "買賣超"])
     dealer_col = _find_column(df, ["自營商", "買賣超"])
     if not symbol_col or not foreign_col or not trust_col or not dealer_col:
         raise DataUnavailableError("TPEX 三大法人欄位解析失敗")
 
-    temp = df[[symbol_col, foreign_col, trust_col, dealer_col]].copy()
-    temp.columns = ["symbol", "foreign_net", "trust_net", "dealer_net"]
+    use_cols = [symbol_col, foreign_col, trust_col, dealer_col]
+    if name_col:
+        use_cols.insert(1, name_col)
+
+    temp = df[use_cols].copy()
+    if name_col:
+        temp.columns = ["symbol", "name", "foreign_net", "trust_net", "dealer_net"]
+        temp["name"] = temp["name"].astype(str).str.strip().replace({"nan": ""})
+    else:
+        temp.columns = ["symbol", "foreign_net", "trust_net", "dealer_net"]
+        temp["name"] = ""
     temp["symbol"] = temp["symbol"].astype(str).str.strip()
     temp["foreign_net"] = temp["foreign_net"].map(_clean_int)
     temp["trust_net"] = temp["trust_net"].map(_clean_int)
@@ -80,14 +100,24 @@ def _prepare_tpex_3insti(df: pd.DataFrame) -> pd.DataFrame:
 
 def _prepare_twse_3insti(df: pd.DataFrame) -> pd.DataFrame:
     symbol_col = _find_column(df, ["證券代號"]) or _find_column(df, ["代號"])
+    name_col = _find_column(df, ["名稱"])
     foreign_col = _find_column(df, ["外資", "買賣超"])
     trust_col = _find_column(df, ["投信", "買賣超"])
     dealer_col = _find_column(df, ["自營商", "買賣超"])
     if not symbol_col or not foreign_col or not trust_col or not dealer_col:
         raise DataUnavailableError("TWSE 三大法人欄位解析失敗")
 
-    temp = df[[symbol_col, foreign_col, trust_col, dealer_col]].copy()
-    temp.columns = ["symbol", "foreign_net", "trust_net", "dealer_net"]
+    use_cols = [symbol_col, foreign_col, trust_col, dealer_col]
+    if name_col:
+        use_cols.insert(1, name_col)
+
+    temp = df[use_cols].copy()
+    if name_col:
+        temp.columns = ["symbol", "name", "foreign_net", "trust_net", "dealer_net"]
+        temp["name"] = temp["name"].astype(str).str.strip().replace({"nan": ""})
+    else:
+        temp.columns = ["symbol", "foreign_net", "trust_net", "dealer_net"]
+        temp["name"] = ""
     temp["symbol"] = temp["symbol"].astype(str).str.strip()
     temp["foreign_net"] = temp["foreign_net"].map(_clean_int)
     temp["trust_net"] = temp["trust_net"].map(_clean_int)
@@ -182,6 +212,8 @@ def _build_daily_rows(
     for _, item in holdings.iterrows():
         symbol = str(item["symbol"]).strip()
         name = str(item["name"]).strip()
+        if name.lower() == "nan":
+            name = ""
 
         open_price = None
         close_price = None
@@ -210,18 +242,24 @@ def _build_daily_rows(
             if not row.empty:
                 open_price = row.iloc[0]["open"]
                 close_price = row.iloc[0]["close"]
+                if not name and "name" in row.columns:
+                    name = str(row.iloc[0].get("name", "")).strip()
 
         row_twse = twse_3insti.loc[twse_3insti["symbol"] == symbol]
         if not row_twse.empty:
             foreign_net = row_twse.iloc[0]["foreign_net"]
             trust_net = row_twse.iloc[0]["trust_net"]
             dealer_net = row_twse.iloc[0]["dealer_net"]
+            if not name and "name" in row_twse.columns:
+                name = str(row_twse.iloc[0].get("name", "")).strip()
         else:
             row_tpex = tpex_3insti.loc[tpex_3insti["symbol"] == symbol]
             if not row_tpex.empty:
                 foreign_net = row_tpex.iloc[0]["foreign_net"]
                 trust_net = row_tpex.iloc[0]["trust_net"]
                 dealer_net = row_tpex.iloc[0]["dealer_net"]
+                if not name and "name" in row_tpex.columns:
+                    name = str(row_tpex.iloc[0].get("name", "")).strip()
 
         series = history.get(symbol, pd.Series(dtype=float))
         if close_price is not None:
@@ -342,6 +380,13 @@ def main() -> None:
     except requests.RequestException as exc:
         print(f"成份股網路連線失敗：{exc}")
         return
+
+    if config.extra_stocks:
+        extra_df = pd.DataFrame(
+            [{"symbol": symbol, "name": ""} for symbol in config.extra_stocks]
+        )
+        holdings = pd.concat([holdings, extra_df], ignore_index=True)
+        holdings = holdings.drop_duplicates(subset=["symbol"]).reset_index(drop=True)
 
     history = load_history(OUTPUT_FILE)
     sheet_names = get_sheet_names(OUTPUT_FILE)
