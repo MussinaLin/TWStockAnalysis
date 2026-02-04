@@ -22,6 +22,7 @@ from .sources import (
     fetch_tpex_daily_quotes,
     fetch_twse_stock_day_all,
     fetch_twse_stock_day,
+    fetch_twse_mi_index,
     fetch_twse_t86,
     find_twse_open_close,
 )
@@ -163,6 +164,33 @@ def _prepare_twse_day_all(df: pd.DataFrame) -> pd.DataFrame:
     return temp
 
 
+def _prepare_twse_mi_index(df: pd.DataFrame) -> pd.DataFrame:
+    symbol_col = _find_column(df, ["證券代號"]) or _find_column(df, ["代號"])
+    name_col = _find_column(df, ["證券名稱"]) or _find_column(df, ["名稱"])
+    open_col = _find_column(df, ["開盤價"]) or _find_column(df, ["開盤"])
+    close_col = _find_column(df, ["收盤價"]) or _find_column(df, ["收盤"])
+
+    if not symbol_col or not open_col or not close_col:
+        raise DataUnavailableError("TWSE MI_INDEX 欄位解析失敗")
+
+    use_cols = [symbol_col, open_col, close_col]
+    if name_col:
+        use_cols.insert(1, name_col)
+
+    temp = df[use_cols].copy()
+    if name_col:
+        temp.columns = ["symbol", "name", "open", "close"]
+        temp["name"] = temp["name"].astype(str).str.strip().replace({"nan": ""})
+    else:
+        temp.columns = ["symbol", "open", "close"]
+        temp["name"] = ""
+
+    temp["symbol"] = temp["symbol"].astype(str).str.strip()
+    temp["open"] = temp["open"].map(_clean_number)
+    temp["close"] = temp["close"].map(_clean_number)
+    return temp
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="00987A 成份股每日分析")
     parser.add_argument(
@@ -243,6 +271,7 @@ def _build_daily_rows(
     history: dict[str, pd.Series],
     twse_3insti: pd.DataFrame,
     twse_day_all: pd.DataFrame | None,
+    twse_mi_index: pd.DataFrame | None,
     tpex_quotes: pd.DataFrame,
     tpex_3insti: pd.DataFrame,
     twse_month_cache: dict[tuple[str, dt.date], pd.DataFrame],
@@ -284,6 +313,14 @@ def _build_daily_rows(
 
             if twse_day is not None:
                 open_price, close_price = find_twse_open_close(twse_day, date)
+
+        if open_price is None and close_price is None and twse_mi_index is not None:
+            row_mi = twse_mi_index.loc[twse_mi_index["symbol"] == symbol]
+            if not row_mi.empty:
+                open_price = row_mi.iloc[0]["open"]
+                close_price = row_mi.iloc[0]["close"]
+                if not name and "name" in row_mi.columns:
+                    name = str(row_mi.iloc[0].get("name", "")).strip()
 
         if open_price is None and close_price is None:
             row = tpex_quotes.loc[tpex_quotes["symbol"] == symbol]
@@ -390,6 +427,17 @@ def _run_for_date(
             print(f"{sheet_name} TWSE STOCK_DAY_ALL 網路連線失敗：{exc}")
             twse_day_all = None
 
+    twse_mi_index = None
+    try:
+        twse_mi_index_raw = fetch_twse_mi_index(session, date)
+        twse_mi_index = _prepare_twse_mi_index(twse_mi_index_raw)
+    except DataUnavailableError as exc:
+        print(f"{sheet_name} TWSE MI_INDEX 取得失敗：{exc}")
+        twse_mi_index = None
+    except requests.RequestException as exc:
+        print(f"{sheet_name} TWSE MI_INDEX 網路連線失敗：{exc}")
+        twse_mi_index = None
+
     try:
         tpex_quotes, tpex_3insti = _prepare_tpex_sources(session, date, config, today)
     except DataUnavailableError as exc:
@@ -409,6 +457,7 @@ def _run_for_date(
         history=history,
         twse_3insti=twse_3insti,
         twse_day_all=twse_day_all,
+        twse_mi_index=twse_mi_index,
         tpex_quotes=tpex_quotes,
         tpex_3insti=tpex_3insti,
         twse_month_cache=twse_month_cache,

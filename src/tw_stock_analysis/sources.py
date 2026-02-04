@@ -13,6 +13,7 @@ HOLDINGS_URL = "https://www.tsit.com.tw/ETF/Home/ETFSeriesDetail/00987A"
 TWSE_STOCK_DAY_URL = "https://www.twse.com.tw/exchangeReport/STOCK_DAY"
 TWSE_T86_URL = "https://www.twse.com.tw/fund/T86"
 TWSE_STOCK_DAY_ALL_URL = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
+TWSE_MI_INDEX_URL = "https://www.twse.com.tw/exchangeReport/MI_INDEX"
 TPEX_DAILY_QUOTES_URL = (
     "https://www.tpex.org.tw/web/stock/aftertrading/DAILY_CLOSE_quotes/"
     "stk_quote_result.php?l=zh-tw&o=data"
@@ -68,6 +69,35 @@ def _date_to_roc(date: dt.date) -> str:
 
 def _format_template(template: str, date: dt.date) -> str:
     return template.format(date=date.isoformat(), roc=_date_to_roc(date))
+
+
+def _extract_twse_table(payload: dict[str, Any]) -> pd.DataFrame:
+    tables = payload.get("tables")
+    if isinstance(tables, list):
+        for table in tables:
+            fields = table.get("fields")
+            data = table.get("data")
+            if not isinstance(fields, list) or not isinstance(data, list):
+                continue
+            joined = "".join(map(str, fields))
+            if ("證券代號" in joined or "代號" in joined) and ("開盤" in joined) and ("收盤" in joined):
+                return pd.DataFrame(data, columns=fields)
+
+    for key, fields in payload.items():
+        if not key.startswith("fields"):
+            continue
+        if not isinstance(fields, list):
+            continue
+        suffix = key.replace("fields", "")
+        data_key = f"data{suffix}"
+        data = payload.get(data_key)
+        if not isinstance(data, list):
+            continue
+        joined = "".join(map(str, fields))
+        if ("證券代號" in joined or "代號" in joined) and ("開盤" in joined) and ("收盤" in joined):
+            return pd.DataFrame(data, columns=fields)
+
+    raise DataUnavailableError("TWSE MI_INDEX 無法找到行情表格。")
 
 
 def _read_tpex_csv(text: str) -> pd.DataFrame:
@@ -232,6 +262,25 @@ def fetch_twse_stock_day_all(session: requests.Session) -> pd.DataFrame:
     if not payload:
         raise DataUnavailableError("TWSE STOCK_DAY_ALL 無資料")
     return pd.DataFrame(payload)
+
+
+def fetch_twse_mi_index(session: requests.Session, date: dt.date) -> pd.DataFrame:
+    params = {
+        "response": "json",
+        "date": date.strftime("%Y%m%d"),
+        "type": "ALLBUT0999",
+    }
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    response = session.get(TWSE_MI_INDEX_URL, params=params, timeout=30, verify=False)
+    response.raise_for_status()
+    payload = response.json()
+    if payload.get("stat") not in {None, "OK"}:
+        raise DataUnavailableError(payload.get("stat") or "TWSE MI_INDEX 回傳異常")
+
+    if not isinstance(payload, dict):
+        raise DataUnavailableError("TWSE MI_INDEX 回傳格式異常")
+
+    return _extract_twse_table(payload)
 
 
 def fetch_tpex_daily_quotes(
