@@ -1,17 +1,3 @@
-Metadata-Version: 2.4
-Name: tw-stock-analysis
-Version: 0.1.0
-Summary: Daily analysis for 00987A constituents
-Requires-Python: >=3.13
-Description-Content-Type: text/markdown
-Requires-Dist: pandas>=2.2.0
-Requires-Dist: numpy>=2.0.0
-Requires-Dist: requests>=2.32.0
-Requires-Dist: certifi>=2024.7.4
-Requires-Dist: openpyxl>=3.1.2
-Requires-Dist: lxml>=5.2.0
-Requires-Dist: python-dotenv>=1.0.1
-
 # 00987A 成份股每日分析
 
 這個專案每天抓取「主動台新優勢成長（00987A）」成份股，產出當天開盤/收盤價、三大法人買賣超，以及常用技術指標（RSI、MACD），寫入單一 Excel 檔 `tw_00987A_daily.xlsx`，每個交易日一個工作表。
@@ -92,6 +78,10 @@ export TPEX_3INSTI_URL_TEMPLATE='...{date}...'
 模板可使用 `{date}`（YYYY-MM-DD）或 `{roc}`（民國年 YYY/MM/DD）。
 
 若未設定模板，程式仍可抓取「當日」上櫃資料，但無法回補指定日期。
+
+## SSL 驗證設定
+
+若遇到台新投信網站 SSL 憑證驗證失敗，程式已預設只對該網站關閉驗證。
 
 ## 備註
 

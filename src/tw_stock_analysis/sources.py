@@ -4,12 +4,13 @@ import datetime as dt
 import io
 import os
 import re
+import urllib3
 from typing import Any
 
 import pandas as pd
 import requests
 
-HOLDINGS_URL = "https://www.tsit.com.tw/ETFSeriesDetail?sku=00987A"
+HOLDINGS_URL = "https://www.tsit.com.tw/ETF/Home/ETFSeriesDetail/00987A"
 TWSE_STOCK_DAY_URL = "https://www.twse.com.tw/exchangeReport/STOCK_DAY"
 TWSE_T86_URL = "https://www.twse.com.tw/fund/T86"
 TPEX_DAILY_QUOTES_URL = (
@@ -68,14 +69,24 @@ def _format_template(template: str, date: dt.date) -> str:
 
 
 def fetch_00987a_holdings(session: requests.Session) -> pd.DataFrame:
-    response = session.get(HOLDINGS_URL, timeout=30)
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    response = session.get(HOLDINGS_URL, timeout=30, verify=False)
     response.raise_for_status()
 
-    tables = pd.read_html(response.text)
+    try:
+        tables = pd.read_html(io.StringIO(response.text))
+    except ValueError as exc:
+        raise DataUnavailableError("成份股頁面解析失敗，未找到表格。") from exc
     target = None
     for table in tables:
-        flat_cols = [" ".join(map(str, col)).strip() if isinstance(col, tuple) else str(col)
-                     for col in table.columns]
+        flat_cols = [
+            " ".join(map(str, col)).strip() if isinstance(col, tuple) else str(col)
+            for col in table.columns
+        ]
+        if any("代號" in col for col in flat_cols) and any("名稱" in col for col in flat_cols):
+            target = table.copy()
+            target.columns = flat_cols
+            break
         if any("成分" in col or "股票" in col for col in flat_cols):
             target = table.copy()
             target.columns = flat_cols
@@ -84,16 +95,29 @@ def fetch_00987a_holdings(session: requests.Session) -> pd.DataFrame:
     if target is None:
         raise DataUnavailableError("無法找到 00987A 成份股表格。")
 
-    first_col = target.columns[0]
     rows = []
-    for raw in target[first_col].astype(str).tolist():
-        match = re.search(r"(\d{4,6})", raw)
-        if not match:
-            continue
-        symbol = match.group(1)
-        name = re.sub(r"\s*\d{4,6}\s*", " ", raw).strip()
-        name = re.sub(r"\s+", " ", name)
-        rows.append({"symbol": symbol, "name": name})
+    symbol_col = next((c for c in target.columns if "代號" in str(c)), None)
+    name_col = next((c for c in target.columns if "名稱" in str(c)), None)
+    if symbol_col and name_col:
+        for _, row in target.iterrows():
+            symbol_raw = str(row.get(symbol_col, "")).strip()
+            name = str(row.get(name_col, "")).strip()
+            match = re.search(r"(\d{4,6})", symbol_raw)
+            symbol = match.group(1) if match else symbol_raw
+            if not symbol:
+                continue
+            name = re.sub(r"\s+", " ", name)
+            rows.append({"symbol": symbol, "name": name})
+    else:
+        first_col = target.columns[0]
+        for raw in target[first_col].astype(str).tolist():
+            match = re.search(r"(\d{4,6})", raw)
+            if not match:
+                continue
+            symbol = match.group(1)
+            name = re.sub(r"\s*\d{4,6}\s*", " ", raw).strip()
+            name = re.sub(r"\s+", " ", name)
+            rows.append({"symbol": symbol, "name": name})
 
     if not rows:
         raise DataUnavailableError("成份股資料解析失敗。")
