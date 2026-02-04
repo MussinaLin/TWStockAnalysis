@@ -24,7 +24,7 @@ from .sources import (
     fetch_twse_stock_day,
     fetch_twse_mi_index,
     fetch_twse_t86,
-    find_twse_open_close,
+    find_twse_ohlcv,
 )
 
 OUTPUT_FILE = Path("tw_00987A_daily.xlsx")
@@ -52,6 +52,9 @@ def _prepare_tpex_quotes(df: pd.DataFrame) -> pd.DataFrame:
     name_col = _find_column(df, ["名稱"])
     open_col = _find_column(df, ["開盤"]) or _find_column(df, ["開盤價"])
     close_col = _find_column(df, ["收盤"]) or _find_column(df, ["收盤價"])
+    high_col = _find_column(df, ["最高"]) or _find_column(df, ["最高價"])
+    low_col = _find_column(df, ["最低"]) or _find_column(df, ["最低價"])
+    volume_col = _find_column(df, ["成交股數"]) or _find_column(df, ["成交量"])
     if not symbol_col or not open_col or not close_col:
         columns = ", ".join([str(col) for col in df.columns[:10]])
         raise DataUnavailableError(f"TPEX 行情欄位解析失敗，欄位={columns}")
@@ -59,17 +62,44 @@ def _prepare_tpex_quotes(df: pd.DataFrame) -> pd.DataFrame:
     use_cols = [symbol_col, open_col, close_col]
     if name_col:
         use_cols.insert(1, name_col)
+    if high_col:
+        use_cols.append(high_col)
+    if low_col:
+        use_cols.append(low_col)
+    if volume_col:
+        use_cols.append(volume_col)
 
     temp = df[use_cols].copy()
+    columns = ["symbol", "open", "close"]
     if name_col:
-        temp.columns = ["symbol", "name", "open", "close"]
+        columns.insert(1, "name")
+    if high_col:
+        columns.append("high")
+    if low_col:
+        columns.append("low")
+    if volume_col:
+        columns.append("volume")
+
+    temp.columns = columns
+    if name_col:
         temp["name"] = temp["name"].astype(str).str.strip().replace({"nan": ""})
     else:
-        temp.columns = ["symbol", "open", "close"]
         temp["name"] = ""
     temp["symbol"] = temp["symbol"].astype(str).str.strip()
     temp["open"] = temp["open"].map(_clean_number)
     temp["close"] = temp["close"].map(_clean_number)
+    if "high" in temp.columns:
+        temp["high"] = temp["high"].map(_clean_number)
+    else:
+        temp["high"] = None
+    if "low" in temp.columns:
+        temp["low"] = temp["low"].map(_clean_number)
+    else:
+        temp["low"] = None
+    if "volume" in temp.columns:
+        temp["volume"] = temp["volume"].map(_clean_int)
+    else:
+        temp["volume"] = None
     return temp
 
 
@@ -142,6 +172,23 @@ def _prepare_twse_day_all(df: pd.DataFrame) -> pd.DataFrame:
         or _find_column(df, ["收盤價"])
         or _find_column(df, ["收盤"])
     )
+    high_col = (
+        _find_column(df, ["highestprice"])
+        or _find_column(df, ["high"])
+        or _find_column(df, ["最高價"])
+        or _find_column(df, ["最高"])
+    )
+    low_col = (
+        _find_column(df, ["lowestprice"])
+        or _find_column(df, ["low"])
+        or _find_column(df, ["最低價"])
+        or _find_column(df, ["最低"])
+    )
+    volume_col = (
+        _find_column(df, ["tradevolume"])
+        or _find_column(df, ["成交股數"])
+        or _find_column(df, ["成交量"])
+    )
 
     if not symbol_col or not open_col or not close_col:
         raise DataUnavailableError("TWSE STOCK_DAY_ALL 欄位解析失敗")
@@ -149,18 +196,45 @@ def _prepare_twse_day_all(df: pd.DataFrame) -> pd.DataFrame:
     use_cols = [symbol_col, open_col, close_col]
     if name_col:
         use_cols.insert(1, name_col)
+    if high_col:
+        use_cols.append(high_col)
+    if low_col:
+        use_cols.append(low_col)
+    if volume_col:
+        use_cols.append(volume_col)
 
     temp = df[use_cols].copy()
+    columns = ["symbol", "open", "close"]
     if name_col:
-        temp.columns = ["symbol", "name", "open", "close"]
+        columns.insert(1, "name")
+    if high_col:
+        columns.append("high")
+    if low_col:
+        columns.append("low")
+    if volume_col:
+        columns.append("volume")
+
+    temp.columns = columns
+    if name_col:
         temp["name"] = temp["name"].astype(str).str.strip().replace({"nan": ""})
     else:
-        temp.columns = ["symbol", "open", "close"]
         temp["name"] = ""
 
     temp["symbol"] = temp["symbol"].astype(str).str.strip()
     temp["open"] = temp["open"].map(_clean_number)
     temp["close"] = temp["close"].map(_clean_number)
+    if "high" in temp.columns:
+        temp["high"] = temp["high"].map(_clean_number)
+    else:
+        temp["high"] = None
+    if "low" in temp.columns:
+        temp["low"] = temp["low"].map(_clean_number)
+    else:
+        temp["low"] = None
+    if "volume" in temp.columns:
+        temp["volume"] = temp["volume"].map(_clean_int)
+    else:
+        temp["volume"] = None
     return temp
 
 
@@ -169,6 +243,9 @@ def _prepare_twse_mi_index(df: pd.DataFrame) -> pd.DataFrame:
     name_col = _find_column(df, ["證券名稱"]) or _find_column(df, ["名稱"])
     open_col = _find_column(df, ["開盤價"]) or _find_column(df, ["開盤"])
     close_col = _find_column(df, ["收盤價"]) or _find_column(df, ["收盤"])
+    high_col = _find_column(df, ["最高價"]) or _find_column(df, ["最高"])
+    low_col = _find_column(df, ["最低價"]) or _find_column(df, ["最低"])
+    volume_col = _find_column(df, ["成交股數"]) or _find_column(df, ["成交量"])
 
     if not symbol_col or not open_col or not close_col:
         raise DataUnavailableError("TWSE MI_INDEX 欄位解析失敗")
@@ -176,18 +253,45 @@ def _prepare_twse_mi_index(df: pd.DataFrame) -> pd.DataFrame:
     use_cols = [symbol_col, open_col, close_col]
     if name_col:
         use_cols.insert(1, name_col)
+    if high_col:
+        use_cols.append(high_col)
+    if low_col:
+        use_cols.append(low_col)
+    if volume_col:
+        use_cols.append(volume_col)
 
     temp = df[use_cols].copy()
+    columns = ["symbol", "open", "close"]
     if name_col:
-        temp.columns = ["symbol", "name", "open", "close"]
+        columns.insert(1, "name")
+    if high_col:
+        columns.append("high")
+    if low_col:
+        columns.append("low")
+    if volume_col:
+        columns.append("volume")
+
+    temp.columns = columns
+    if name_col:
         temp["name"] = temp["name"].astype(str).str.strip().replace({"nan": ""})
     else:
-        temp.columns = ["symbol", "open", "close"]
         temp["name"] = ""
 
     temp["symbol"] = temp["symbol"].astype(str).str.strip()
     temp["open"] = temp["open"].map(_clean_number)
     temp["close"] = temp["close"].map(_clean_number)
+    if "high" in temp.columns:
+        temp["high"] = temp["high"].map(_clean_number)
+    else:
+        temp["high"] = None
+    if "low" in temp.columns:
+        temp["low"] = temp["low"].map(_clean_number)
+    else:
+        temp["low"] = None
+    if "volume" in temp.columns:
+        temp["volume"] = temp["volume"].map(_clean_int)
+    else:
+        temp["volume"] = None
     return temp
 
 
@@ -277,14 +381,20 @@ def _build_daily_rows(
     twse_month_cache: dict[tuple[str, dt.date], pd.DataFrame],
 ) -> pd.DataFrame:
     rows: list[dict[str, object]] = []
-    for _, item in holdings.iterrows():
+    total = len(holdings)
+    for idx, item in holdings.iterrows():
         symbol = str(item["symbol"]).strip()
         name = str(item["name"]).strip()
         if name.lower() == "nan":
             name = ""
+        display_name = f" {name}" if name else ""
+        print(f"{date.isoformat()} {idx + 1}/{total} {symbol}{display_name}")
 
         open_price = None
         close_price = None
+        high_price = None
+        low_price = None
+        volume = None
         foreign_net = None
         trust_net = None
         dealer_net = None
@@ -294,10 +404,19 @@ def _build_daily_rows(
             if not row_all.empty:
                 open_price = row_all.iloc[0]["open"]
                 close_price = row_all.iloc[0]["close"]
+                high_price = row_all.iloc[0].get("high")
+                low_price = row_all.iloc[0].get("low")
+                volume = row_all.iloc[0].get("volume")
                 if not name and "name" in row_all.columns:
                     name = str(row_all.iloc[0].get("name", "")).strip()
 
-        if open_price is None and close_price is None:
+        if (
+            open_price is None
+            or close_price is None
+            or high_price is None
+            or low_price is None
+            or volume is None
+        ):
             month_start = date.replace(day=1)
             cache_key = (symbol, month_start)
             twse_day = None
@@ -312,13 +431,40 @@ def _build_daily_rows(
                     twse_month_cache[cache_key] = twse_day
 
             if twse_day is not None:
-                open_price, close_price = find_twse_open_close(twse_day, date)
+                (
+                    open_value,
+                    high_value,
+                    low_value,
+                    close_value,
+                    volume_value,
+                ) = find_twse_ohlcv(twse_day, date)
+                if open_price is None:
+                    open_price = open_value
+                if close_price is None:
+                    close_price = close_value
+                if high_price is None:
+                    high_price = high_value
+                if low_price is None:
+                    low_price = low_value
+                if volume is None:
+                    volume = volume_value
 
-        if open_price is None and close_price is None and twse_mi_index is not None:
+        if (
+            (open_price is None or close_price is None or high_price is None or low_price is None or volume is None)
+            and twse_mi_index is not None
+        ):
             row_mi = twse_mi_index.loc[twse_mi_index["symbol"] == symbol]
             if not row_mi.empty:
-                open_price = row_mi.iloc[0]["open"]
-                close_price = row_mi.iloc[0]["close"]
+                if open_price is None:
+                    open_price = row_mi.iloc[0]["open"]
+                if close_price is None:
+                    close_price = row_mi.iloc[0]["close"]
+                if high_price is None:
+                    high_price = row_mi.iloc[0].get("high")
+                if low_price is None:
+                    low_price = row_mi.iloc[0].get("low")
+                if volume is None:
+                    volume = row_mi.iloc[0].get("volume")
                 if not name and "name" in row_mi.columns:
                     name = str(row_mi.iloc[0].get("name", "")).strip()
 
@@ -327,6 +473,9 @@ def _build_daily_rows(
             if not row.empty:
                 open_price = row.iloc[0]["open"]
                 close_price = row.iloc[0]["close"]
+                high_price = row.iloc[0].get("high")
+                low_price = row.iloc[0].get("low")
+                volume = row.iloc[0].get("volume")
                 if not name and "name" in row.columns:
                     name = str(row.iloc[0].get("name", "")).strip()
 
@@ -370,6 +519,9 @@ def _build_daily_rows(
                 "name": name,
                 "open": open_price,
                 "close": close_price,
+                "high": high_price,
+                "low": low_price,
+                "volume": volume,
                 "foreign_net": foreign_net,
                 "trust_net": trust_net,
                 "dealer_net": dealer_net,
@@ -400,6 +552,7 @@ def _run_for_date(
     skip_existing: bool = False,
 ) -> bool:
     sheet_name = date.isoformat()
+    print(f"開始處理日期 {sheet_name}")
     if skip_existing and sheet_name in sheet_names:
         print(f"已存在 {sheet_name}，略過回補。")
         return False

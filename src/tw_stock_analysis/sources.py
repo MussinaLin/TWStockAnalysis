@@ -230,6 +230,26 @@ def find_twse_open_close(df: pd.DataFrame, date: dt.date) -> tuple[float | None,
     return open_price, close_price
 
 
+def find_twse_ohlcv(
+    df: pd.DataFrame, date: dt.date
+) -> tuple[float | None, float | None, float | None, float | None, int | None]:
+    if "日期" not in df.columns:
+        return None, None, None, None, None
+
+    df = df.copy()
+    df["_gregorian"] = df["日期"].map(_roc_to_date)
+    row = df.loc[df["_gregorian"] == date]
+    if row.empty:
+        return None, None, None, None, None
+
+    open_price = _clean_number(row.iloc[0].get("開盤價"))
+    high_price = _clean_number(row.iloc[0].get("最高價"))
+    low_price = _clean_number(row.iloc[0].get("最低價"))
+    close_price = _clean_number(row.iloc[0].get("收盤價"))
+    volume = _clean_int(row.iloc[0].get("成交股數")) or _clean_int(row.iloc[0].get("成交量"))
+    return open_price, high_price, low_price, close_price, volume
+
+
 def fetch_twse_t86(session: requests.Session, date: dt.date) -> pd.DataFrame:
     params = {
         "response": "json",
