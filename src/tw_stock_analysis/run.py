@@ -827,7 +827,28 @@ def _build_alpha_sheet(config: AppConfig, target_date: dt.date) -> None:
             and float(macd_hist) > config.alpha_macd_hist_min
         )
 
-        if not (cond_insti or cond_rsi or cond_macd):
+        # --- Condition 4: Volume breakout (5-day MA) ---
+        volume = r.get("volume")
+        vol_ma5 = r.get("vol_ma5")
+        vol_ma10 = r.get("vol_ma10")
+        cond_vol_ma5 = (
+            volume is not None
+            and vol_ma5 is not None
+            and not pd.isna(volume)
+            and not pd.isna(vol_ma5)
+            and float(volume) > float(vol_ma5)
+        )
+
+        # --- Condition 5: Volume breakout (10-day MA) ---
+        cond_vol_ma10 = (
+            volume is not None
+            and vol_ma10 is not None
+            and not pd.isna(volume)
+            and not pd.isna(vol_ma10)
+            and float(volume) > float(vol_ma10)
+        )
+
+        if not (cond_insti or cond_rsi or cond_macd or cond_vol_ma5 or cond_vol_ma10):
             continue
 
         reasons: list[str] = []
@@ -842,11 +863,18 @@ def _build_alpha_sheet(config: AppConfig, target_date: dt.date) -> None:
             reasons.append(f"RSI 健康：{float(rsi):.1f}（區間 {config.alpha_rsi_min}-{config.alpha_rsi_max}）")
         if cond_macd:
             reasons.append(f"MACD 多方：histogram {float(macd_hist):+.2f}")
+        if cond_vol_ma5:
+            reasons.append(f"量突破5MA：{int(volume):,} > {int(vol_ma5):,}")
+        if cond_vol_ma10:
+            reasons.append(f"量突破10MA：{int(volume):,} > {int(vol_ma10):,}")
 
         rows.append({
             "symbol": sym,
             "name": name,
             "close": close,
+            "volume": volume,
+            "vol_ma5": vol_ma5,
+            "vol_ma10": vol_ma10,
             "rsi_14": round(float(rsi), 2) if pd.notna(rsi) else None,
             "macd": round(float(macd), 2) if pd.notna(macd) else None,
             "macd_signal": round(float(macd_signal), 2) if pd.notna(macd_signal) else None,
@@ -857,6 +885,8 @@ def _build_alpha_sheet(config: AppConfig, target_date: dt.date) -> None:
             "cond_insti": cond_insti,
             "cond_rsi": cond_rsi,
             "cond_macd": cond_macd,
+            "cond_vol_ma5": cond_vol_ma5,
+            "cond_vol_ma10": cond_vol_ma10,
             "reasons": "；".join(reasons),
         })
 
