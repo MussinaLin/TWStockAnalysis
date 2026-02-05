@@ -374,6 +374,7 @@ def _build_daily_rows(
     date: dt.date,
     holdings: pd.DataFrame,
     history: dict[str, pd.Series],
+    volume_history: dict[str, pd.Series],
     twse_3insti: pd.DataFrame,
     twse_day_all: pd.DataFrame | None,
     twse_mi_index: pd.DataFrame | None,
@@ -505,6 +506,18 @@ def _build_daily_rows(
             series = series[~series.index.duplicated(keep="last")].sort_index()
             history[symbol] = series
 
+        # Update volume history and compute moving averages
+        vol_series = volume_history.get(symbol, pd.Series(dtype=float))
+        if volume is not None:
+            vol_series = pd.concat(
+                [vol_series, pd.Series([float(volume)], index=pd.to_datetime([date]))]
+            )
+            vol_series = vol_series[~vol_series.index.duplicated(keep="last")].sort_index()
+            volume_history[symbol] = vol_series
+
+        vol_ma5 = vol_series.tail(5).mean() if len(vol_series) >= 5 else None
+        vol_ma10 = vol_series.tail(10).mean() if len(vol_series) >= 10 else None
+
         rsi = compute_rsi(series).iloc[-1] if len(series) >= 14 else None
         macd, macd_signal, macd_hist = (
             compute_macd(series, fast=config.macd_fast, slow=config.macd_slow, signal=config.macd_signal)
@@ -534,6 +547,8 @@ def _build_daily_rows(
                 "high": high_price,
                 "low": low_price,
                 "volume": volume,
+                "vol_ma5": int(vol_ma5) if vol_ma5 is not None else None,
+                "vol_ma10": int(vol_ma10) if vol_ma10 is not None else None,
                 "foreign_net": foreign_net_lots,
                 "trust_net": trust_net_lots,
                 "dealer_net": dealer_net_lots,
@@ -553,6 +568,7 @@ def _run_for_date(
     date: dt.date,
     holdings: pd.DataFrame,
     history: dict[str, pd.Series],
+    volume_history: dict[str, pd.Series],
     sheet_names: set[str],
     twse_month_cache: dict[tuple[str, dt.date], pd.DataFrame],
     config: AppConfig,
@@ -691,6 +707,7 @@ def _run_for_date(
         date=date,
         holdings=holdings,
         history=history,
+        volume_history=volume_history,
         twse_3insti=twse_3insti,
         twse_day_all=twse_day_all,
         twse_mi_index=twse_mi_index,
@@ -878,7 +895,7 @@ def main() -> None:
 
     holdings = pd.DataFrame([{"symbol": s, "name": ""} for s in config.extra_stocks])
 
-    history = load_history(OUTPUT_FILE)
+    history, volume_history = load_history(OUTPUT_FILE)
     sheet_names = get_sheet_names(OUTPUT_FILE)
     twse_month_cache: dict[tuple[str, dt.date], pd.DataFrame] = {}
 
@@ -895,6 +912,7 @@ def main() -> None:
                 date=date,
                 holdings=holdings,
                 history=history,
+                volume_history=volume_history,
                 sheet_names=sheet_names,
                 twse_month_cache=twse_month_cache,
                 config=config,
@@ -920,6 +938,7 @@ def main() -> None:
                 date=date,
                 holdings=holdings,
                 history=history,
+                volume_history=volume_history,
                 sheet_names=sheet_names,
                 twse_month_cache=twse_month_cache,
                 config=config,
@@ -934,6 +953,7 @@ def main() -> None:
             date=target_date,
             holdings=holdings,
             history=history,
+            volume_history=volume_history,
             sheet_names=sheet_names,
             twse_month_cache=twse_month_cache,
             config=config,

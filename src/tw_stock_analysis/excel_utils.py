@@ -7,11 +7,20 @@ import pandas as pd
 from openpyxl import load_workbook
 
 
-def load_history(path: Path) -> dict[str, pd.Series]:
-    if not path.exists():
-        return {}
+def load_history(
+    path: Path,
+) -> tuple[dict[str, pd.Series], dict[str, pd.Series]]:
+    """Load historical close prices and volumes from Excel sheets.
 
-    history: dict[str, list[tuple[dt.date, float]]] = {}
+    Returns:
+        Tuple of (close_history, volume_history) where each is a dict
+        mapping symbol to a pandas Series indexed by date.
+    """
+    if not path.exists():
+        return {}, {}
+
+    close_hist: dict[str, list[tuple[dt.date, float]]] = {}
+    volume_hist: dict[str, list[tuple[dt.date, float]]] = {}
     xls = pd.ExcelFile(path)
     for sheet in xls.sheet_names:
         try:
@@ -24,17 +33,22 @@ def load_history(path: Path) -> dict[str, pd.Series]:
         for _, row in df.iterrows():
             symbol = str(row["symbol"]).strip()
             close = row["close"]
-            if pd.isna(close):
-                continue
-            history.setdefault(symbol, []).append((sheet_date, float(close)))
+            if pd.notna(close):
+                close_hist.setdefault(symbol, []).append((sheet_date, float(close)))
+            vol = row.get("volume")
+            if pd.notna(vol):
+                volume_hist.setdefault(symbol, []).append((sheet_date, float(vol)))
 
-    result: dict[str, pd.Series] = {}
-    for symbol, rows in history.items():
-        rows = sorted(rows, key=lambda item: item[0])
-        dates = [item[0] for item in rows]
-        closes = [item[1] for item in rows]
-        result[symbol] = pd.Series(closes, index=pd.to_datetime(dates))
-    return result
+    def _to_series(hist: dict[str, list[tuple[dt.date, float]]]) -> dict[str, pd.Series]:
+        result: dict[str, pd.Series] = {}
+        for symbol, rows in hist.items():
+            rows = sorted(rows, key=lambda item: item[0])
+            dates = [item[0] for item in rows]
+            values = [item[1] for item in rows]
+            result[symbol] = pd.Series(values, index=pd.to_datetime(dates))
+        return result
+
+    return _to_series(close_hist), _to_series(volume_hist)
 
 
 def get_sheet_names(path: Path) -> set[str]:
