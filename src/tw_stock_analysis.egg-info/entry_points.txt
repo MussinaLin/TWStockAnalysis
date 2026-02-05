@@ -1,2 +1,0 @@
-[console_scripts]
-tw-00987a-daily = tw_stock_analysis.run:main
