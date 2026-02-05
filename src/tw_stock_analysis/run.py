@@ -36,6 +36,7 @@ from .sources import (
 )
 
 OUTPUT_FILE = Path("tw_stock_daily.xlsx")
+ALPHA_FILE = Path("alpha_pick.xlsx")
 TAIPEI_TZ = ZoneInfo("Asia/Taipei")
 DEFAULT_BACKFILL_DAYS = 120
 
@@ -710,6 +711,154 @@ def _run_for_date(
     return True
 
 
+def _build_alpha_sheet(config: AppConfig, target_date: dt.date) -> None:
+    """Analyse recent trading data and write alpha picks to alpha_pick.xlsx."""
+    if not OUTPUT_FILE.exists():
+        print("尚無每日資料，無法產生 alpha 分析。")
+        return
+
+    xls = pd.ExcelFile(OUTPUT_FILE)
+    date_sheets = sorted([s for s in xls.sheet_names if s != "market_closed"], reverse=True)
+    if not date_sheets:
+        print("尚無每日交易資料，無法產生 alpha 分析。")
+        return
+
+    long_n = config.alpha_insti_days_long
+    short_n = config.alpha_insti_days_short
+    needed_sheets = date_sheets[:long_n]
+
+    # Load recent sheets into a dict: {date_str: DataFrame}
+    recent: dict[str, pd.DataFrame] = {}
+    for s in needed_sheets:
+        recent[s] = xls.parse(s)
+
+    latest_sheet = date_sheets[0]
+    latest_df = recent[latest_sheet]
+    if "symbol" not in latest_df.columns:
+        print("最新 sheet 缺少 symbol 欄位，無法分析。")
+        return
+
+    symbols = latest_df["symbol"].astype(str).str.strip().tolist()
+    short_sheets = date_sheets[:short_n]
+    long_sheets = date_sheets[:long_n]
+
+    rows: list[dict] = []
+    for sym in symbols:
+        row_latest = latest_df[latest_df["symbol"].astype(str).str.strip() == sym]
+        if row_latest.empty:
+            continue
+        r = row_latest.iloc[0]
+        name = str(r.get("name", "")).strip()
+        close = r.get("close")
+        rsi = r.get("rsi_14")
+        macd = r.get("macd")
+        macd_signal = r.get("macd_signal")
+        macd_hist = r.get("macd_hist")
+
+        # Collect institutional net across recent sheets
+        insti_short: list[float] = []
+        for s in short_sheets:
+            df = recent.get(s)
+            if df is None:
+                continue
+            row = df[df["symbol"].astype(str).str.strip() == sym]
+            if row.empty:
+                continue
+            val = row.iloc[0].get("institutional_investors_net")
+            if pd.notna(val):
+                insti_short.append(float(val))
+
+        insti_long: list[float] = []
+        for s in long_sheets:
+            df = recent.get(s)
+            if df is None:
+                continue
+            row = df[df["symbol"].astype(str).str.strip() == sym]
+            if row.empty:
+                continue
+            val = row.iloc[0].get("institutional_investors_net")
+            if pd.notna(val):
+                insti_long.append(float(val))
+
+        insti_short_sum = sum(insti_short) if insti_short else None
+        insti_short_avg = (insti_short_sum / len(insti_short)) if insti_short else None
+        insti_long_avg = (sum(insti_long) / len(insti_long)) if insti_long else None
+
+        # --- Condition 1: institutional momentum ---
+        cond_insti = (
+            insti_short_sum is not None
+            and insti_long_avg is not None
+            and insti_short_avg is not None
+            and insti_short_sum > 0
+            and insti_short_avg > insti_long_avg
+        )
+
+        # --- Condition 2: RSI in healthy range ---
+        cond_rsi = (
+            rsi is not None
+            and not pd.isna(rsi)
+            and config.alpha_rsi_min <= float(rsi) <= config.alpha_rsi_max
+        )
+
+        # --- Condition 3: MACD histogram bullish ---
+        cond_macd = (
+            macd_hist is not None
+            and not pd.isna(macd_hist)
+            and float(macd_hist) > config.alpha_macd_hist_min
+        )
+
+        if not (cond_insti or cond_rsi or cond_macd):
+            continue
+
+        reasons: list[str] = []
+        if cond_insti:
+            reasons.append(
+                f"法人加碼：近{len(insti_short)}日淨買超合計"
+                f"{insti_short_sum:+,.0f}，"
+                f"日均{insti_short_avg:+,.0f} > "
+                f"近{len(insti_long)}日均{insti_long_avg:+,.0f}"
+            )
+        if cond_rsi:
+            reasons.append(f"RSI 健康：{float(rsi):.1f}（區間 {config.alpha_rsi_min}-{config.alpha_rsi_max}）")
+        if cond_macd:
+            reasons.append(f"MACD 多方：histogram {float(macd_hist):+.2f}")
+
+        rows.append({
+            "symbol": sym,
+            "name": name,
+            "close": close,
+            "rsi_14": round(float(rsi), 2) if pd.notna(rsi) else None,
+            "macd": round(float(macd), 2) if pd.notna(macd) else None,
+            "macd_signal": round(float(macd_signal), 2) if pd.notna(macd_signal) else None,
+            "macd_hist": round(float(macd_hist), 2) if pd.notna(macd_hist) else None,
+            f"insti_net_{short_n}d_sum": insti_short_sum,
+            f"insti_net_{short_n}d_avg": round(insti_short_avg, 0) if insti_short_avg is not None else None,
+            f"insti_net_{long_n}d_avg": round(insti_long_avg, 0) if insti_long_avg is not None else None,
+            "cond_insti": cond_insti,
+            "cond_rsi": cond_rsi,
+            "cond_macd": cond_macd,
+            "reasons": "；".join(reasons),
+        })
+
+    if not rows:
+        print("未找到符合 alpha 條件的股票。")
+        return
+
+    alpha_df = pd.DataFrame(rows)
+    sheet_name = f"alpha_{target_date.isoformat()}"
+
+    if ALPHA_FILE.exists():
+        with pd.ExcelWriter(
+            ALPHA_FILE, engine="openpyxl", mode="a", if_sheet_exists="replace"
+        ) as writer:
+            alpha_df.to_excel(writer, sheet_name=sheet_name, index=False)
+    else:
+        with pd.ExcelWriter(ALPHA_FILE, engine="openpyxl", mode="w") as writer:
+            alpha_df.to_excel(writer, sheet_name=sheet_name, index=False)
+
+    print(f"Alpha 分析已寫入 {ALPHA_FILE} ({sheet_name})，共 {len(rows)} 檔")
+
+
 def main() -> None:
     load_dotenv()
     config = AppConfig.from_env()
@@ -798,6 +947,8 @@ def main() -> None:
             today=today,
             skip_existing=False,
         )
+
+    _build_alpha_sheet(config, target_date)
 
 
 if __name__ == "__main__":
