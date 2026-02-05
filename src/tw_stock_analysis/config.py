@@ -6,8 +6,6 @@ import os
 
 @dataclass(frozen=True)
 class AppConfig:
-    tpex_daily_quotes_url_template: str | None
-    tpex_3insti_url_template: str | None
     extra_stocks: list[str]
     alpha_rsi_min: float
     alpha_rsi_max: float
@@ -24,8 +22,6 @@ class AppConfig:
             if item.strip()
         ]
         return cls(
-            tpex_daily_quotes_url_template=os.getenv("TPEX_DAILY_QUOTES_URL_TEMPLATE"),
-            tpex_3insti_url_template=os.getenv("TPEX_3INSTI_URL_TEMPLATE"),
             extra_stocks=extra_stocks,
             alpha_rsi_min=float(os.getenv("ALPHA_RSI_MIN", "40")),
             alpha_rsi_max=float(os.getenv("ALPHA_RSI_MAX", "70")),

@@ -23,10 +23,7 @@ from .sources import (
     DataUnavailableError,
     _clean_int,
     _clean_number,
-    fetch_00987a_holdings,
-    fetch_tpex_3insti,
     fetch_tpex_3insti_v2,
-    fetch_tpex_daily_quotes,
     fetch_tpex_daily_quotes_v2,
     fetch_twse_stock_day_all,
     fetch_twse_stock_day,
@@ -351,8 +348,6 @@ def _build_date_range(start: dt.date, end: dt.date) -> list[dt.date]:
 def _prepare_tpex_sources(
     session: requests.Session,
     date: dt.date,
-    config: AppConfig,
-    today: dt.date,
 ) -> tuple[pd.DataFrame | None, dt.date | None, pd.DataFrame | None, dt.date | None]:
     # Use V2 JSON API (supports historical queries natively)
     tpex_quotes_raw, tpex_quotes_date = fetch_tpex_daily_quotes_v2(session, date)
@@ -650,7 +645,7 @@ def _run_for_date(
             tpex_quotes_date,
             tpex_3insti,
             tpex_3insti_date,
-        ) = _prepare_tpex_sources(session, date, config, today)
+        ) = _prepare_tpex_sources(session, date)
         if tpex_quotes_date is None:
             print(f"{sheet_name} TPEX 日行情無法解析日期，略過使用")
         elif tpex_quotes_date != date:
@@ -867,23 +862,13 @@ def main() -> None:
     target_date = _parse_date(args.date) if args.date else today
 
     session = requests.Session()
-    session.headers.update({"User-Agent": "tw-00987a-daily/0.1"})
+    session.headers.update({"User-Agent": "tw-stock-daily/0.1"})
 
-    try:
-        holdings = fetch_00987a_holdings(session)
-    except DataUnavailableError as exc:
-        print(f"成份股資料取得失敗：{exc}")
-        return
-    except requests.RequestException as exc:
-        print(f"成份股網路連線失敗：{exc}")
+    if not config.extra_stocks:
+        print("請在 .env 設定 STOCKS（逗號分隔的股票代號）")
         return
 
-    if config.extra_stocks:
-        extra_df = pd.DataFrame(
-            [{"symbol": symbol, "name": ""} for symbol in config.extra_stocks]
-        )
-        holdings = pd.concat([holdings, extra_df], ignore_index=True)
-        holdings = holdings.drop_duplicates(subset=["symbol"]).reset_index(drop=True)
+    holdings = pd.DataFrame([{"symbol": s, "name": ""} for s in config.extra_stocks])
 
     history = load_history(OUTPUT_FILE)
     sheet_names = get_sheet_names(OUTPUT_FILE)
