@@ -380,6 +380,7 @@ def _build_daily_rows(
     tpex_quotes: pd.DataFrame,
     tpex_3insti: pd.DataFrame,
     twse_month_cache: dict[tuple[str, dt.date], pd.DataFrame],
+    config: AppConfig,
 ) -> pd.DataFrame:
     rows: list[dict[str, object]] = []
     total = len(holdings)
@@ -505,10 +506,10 @@ def _build_daily_rows(
             history[symbol] = series
 
         rsi = compute_rsi(series).iloc[-1] if len(series) >= 14 else None
-        macd, macd_signal, macd_hist = compute_macd(series) if len(series) >= 2 else (
-            pd.Series(dtype=float),
-            pd.Series(dtype=float),
-            pd.Series(dtype=float),
+        macd, macd_signal, macd_hist = (
+            compute_macd(series, fast=config.macd_fast, slow=config.macd_slow, signal=config.macd_signal)
+            if len(series) >= 2
+            else (pd.Series(dtype=float), pd.Series(dtype=float), pd.Series(dtype=float))
         )
         macd_value = macd.iloc[-1] if not macd.empty else None
         macd_signal_value = macd_signal.iloc[-1] if not macd_signal.empty else None
@@ -690,6 +691,7 @@ def _run_for_date(
         tpex_quotes=tpex_quotes,
         tpex_3insti=tpex_3insti,
         twse_month_cache=twse_month_cache,
+        config=config,
     )
 
     if output_df.empty:
