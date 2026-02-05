@@ -18,7 +18,7 @@ from .excel_utils import (
     write_daily_sheet,
     write_market_closed_sheet,
 )
-from .indicators import compute_macd, compute_rsi
+from .indicators import compute_bollinger_bands, compute_macd, compute_rsi
 from .sources import (
     DataUnavailableError,
     _clean_int,
@@ -528,6 +528,24 @@ def _build_daily_rows(
         macd_signal_value = macd_signal.iloc[-1] if not macd_signal.empty else None
         macd_hist_value = macd_hist.iloc[-1] if not macd_hist.empty else None
 
+        # Bollinger Bands
+        bb_upper, bb_middle, bb_lower, bb_pct_b, bb_bw = (
+            compute_bollinger_bands(series, period=config.bb_period)
+            if len(series) >= config.bb_period
+            else (
+                pd.Series(dtype=float),
+                pd.Series(dtype=float),
+                pd.Series(dtype=float),
+                pd.Series(dtype=float),
+                pd.Series(dtype=float),
+            )
+        )
+        bb_upper_val = bb_upper.iloc[-1] if not bb_upper.empty else None
+        bb_middle_val = bb_middle.iloc[-1] if not bb_middle.empty else None
+        bb_lower_val = bb_lower.iloc[-1] if not bb_lower.empty else None
+        bb_pct_b_val = bb_pct_b.iloc[-1] if not bb_pct_b.empty else None
+        bb_bw_val = bb_bw.iloc[-1] if not bb_bw.empty else None
+
         # Convert from shares to lots (張, 1 lot = 1000 shares)
         foreign_net_lots = foreign_net // 1000 if foreign_net is not None else None
         trust_net_lots = trust_net // 1000 if trust_net is not None else None
@@ -538,6 +556,11 @@ def _build_daily_rows(
             else (foreign_net_lots or 0) + (trust_net_lots or 0) + (dealer_net_lots or 0)
         )
 
+        # Convert volume from shares to lots (張, 1 lot = 1000 shares)
+        volume_lots = volume // 1000 if volume is not None else None
+        vol_ma5_lots = int(vol_ma5 // 1000) if vol_ma5 is not None else None
+        vol_ma10_lots = int(vol_ma10 // 1000) if vol_ma10 is not None else None
+
         rows.append(
             {
                 "symbol": symbol,
@@ -546,9 +569,9 @@ def _build_daily_rows(
                 "close": close_price,
                 "high": high_price,
                 "low": low_price,
-                "volume": volume,
-                "vol_ma5": int(vol_ma5) if vol_ma5 is not None else None,
-                "vol_ma10": int(vol_ma10) if vol_ma10 is not None else None,
+                "volume": volume_lots,
+                "vol_ma5": vol_ma5_lots,
+                "vol_ma10": vol_ma10_lots,
                 "foreign_net": foreign_net_lots,
                 "trust_net": trust_net_lots,
                 "dealer_net": dealer_net_lots,
@@ -557,6 +580,11 @@ def _build_daily_rows(
                 "macd": macd_value,
                 "macd_signal": macd_signal_value,
                 "macd_hist": macd_hist_value,
+                "bb_upper": bb_upper_val,
+                "bb_middle": bb_middle_val,
+                "bb_lower": bb_lower_val,
+                "bb_percent_b": bb_pct_b_val,
+                "bb_bandwidth": bb_bw_val,
             }
         )
 

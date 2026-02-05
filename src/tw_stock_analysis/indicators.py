@@ -28,3 +28,27 @@ def compute_macd(
     macd_signal = macd.ewm(span=signal, adjust=False).mean()
     macd_hist = macd - macd_signal
     return macd, macd_signal, macd_hist
+
+
+def compute_bollinger_bands(
+    close: pd.Series,
+    period: int = 20,
+    num_std: float = 2.0,
+) -> tuple[pd.Series, pd.Series, pd.Series, pd.Series, pd.Series]:
+    """Compute Bollinger Bands.
+
+    Returns:
+        Tuple of (upper, middle, lower, percent_b, bandwidth)
+        - upper: Upper band (middle + num_std * std)
+        - middle: Middle band (SMA)
+        - lower: Lower band (middle - num_std * std)
+        - percent_b: %B = (close - lower) / (upper - lower)
+        - bandwidth: Bandwidth = (upper - lower) / middle
+    """
+    middle = close.rolling(window=period, min_periods=period).mean()
+    std = close.rolling(window=period, min_periods=period).std()
+    upper = middle + num_std * std
+    lower = middle - num_std * std
+    percent_b = (close - lower) / (upper - lower)
+    bandwidth = (upper - lower) / middle
+    return upper, middle, lower, percent_b, bandwidth
