@@ -515,6 +515,16 @@ def _build_daily_rows(
         macd_signal_value = macd_signal.iloc[-1] if not macd_signal.empty else None
         macd_hist_value = macd_hist.iloc[-1] if not macd_hist.empty else None
 
+        # Convert from shares to lots (張, 1 lot = 1000 shares)
+        foreign_net_lots = foreign_net // 1000 if foreign_net is not None else None
+        trust_net_lots = trust_net // 1000 if trust_net is not None else None
+        dealer_net_lots = dealer_net // 1000 if dealer_net is not None else None
+        insti_total_lots = (
+            None
+            if foreign_net_lots is None and trust_net_lots is None and dealer_net_lots is None
+            else (foreign_net_lots or 0) + (trust_net_lots or 0) + (dealer_net_lots or 0)
+        )
+
         rows.append(
             {
                 "symbol": symbol,
@@ -524,14 +534,10 @@ def _build_daily_rows(
                 "high": high_price,
                 "low": low_price,
                 "volume": volume,
-                "foreign_net": foreign_net,
-                "trust_net": trust_net,
-                "dealer_net": dealer_net,
-                "institutional_investors_net": (
-                    None
-                    if foreign_net is None and trust_net is None and dealer_net is None
-                    else (foreign_net or 0) + (trust_net or 0) + (dealer_net or 0)
-                ),
+                "foreign_net": foreign_net_lots,
+                "trust_net": trust_net_lots,
+                "dealer_net": dealer_net_lots,
+                "institutional_investors_net": insti_total_lots,
                 "rsi_14": rsi,
                 "macd": macd_value,
                 "macd_signal": macd_signal_value,
