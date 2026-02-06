@@ -39,7 +39,10 @@ def build_alpha_sheet(
 
     long_n = config.alpha_insti_days_long
     short_n = config.alpha_insti_days_short
-    needed_sheets = date_sheets[:long_n]
+    bb_long_n = config.bb_narrow_long_days
+    # Need enough sheets for both insti and BB narrow analysis
+    max_needed = max(long_n, bb_long_n)
+    needed_sheets = date_sheets[:max_needed]
 
     # Load recent sheets
     recent: dict[str, pd.DataFrame] = {}
@@ -55,11 +58,14 @@ def build_alpha_sheet(
     symbols = latest_df["symbol"].astype(str).str.strip().tolist()
     short_sheets = date_sheets[:short_n]
     long_sheets = date_sheets[:long_n]
+    bb_short_sheets = date_sheets[:config.bb_narrow_short_days]
+    bb_long_sheets = date_sheets[:config.bb_narrow_long_days]
 
     rows: list[dict] = []
     for sym in symbols:
         row_data = _analyze_symbol(
-            sym, latest_df, recent, short_sheets, long_sheets, config
+            sym, latest_df, recent, short_sheets, long_sheets,
+            bb_short_sheets, bb_long_sheets, config
         )
         if row_data:
             rows.append(row_data)
@@ -89,6 +95,8 @@ def _analyze_symbol(
     recent: dict[str, pd.DataFrame],
     short_sheets: list[str],
     long_sheets: list[str],
+    bb_short_sheets: list[str],
+    bb_long_sheets: list[str],
     config: AppConfig,
 ) -> dict | None:
     """Analyze a single symbol for alpha conditions.
@@ -110,6 +118,9 @@ def _analyze_symbol(
     volume = r.get("volume")
     vol_ma5 = r.get("vol_ma5")
     vol_ma10 = r.get("vol_ma10")
+    bb_upper = r.get("bb_upper")
+    bb_bandwidth = r.get("bb_bandwidth")
+    bb_percent_b = r.get("bb_percent_b")
 
     # Collect institutional net across recent sheets
     insti_short = _collect_values(sym, recent, short_sheets, "institutional_investors_net")
@@ -119,8 +130,17 @@ def _analyze_symbol(
     insti_short_avg = (insti_short_sum / len(insti_short)) if insti_short else None
     insti_long_avg = (sum(insti_long) / len(insti_long)) if insti_long else None
 
+    # Collect BB bandwidth across recent sheets
+    bb_bw_short = _collect_values(sym, recent, bb_short_sheets, "bb_bandwidth")
+    bb_bw_long = _collect_values(sym, recent, bb_long_sheets, "bb_bandwidth")
+
+    bb_bw_short_avg = (sum(bb_bw_short) / len(bb_bw_short)) if bb_bw_short else None
+    bb_bw_long_avg = (sum(bb_bw_long) / len(bb_bw_long)) if bb_bw_long else None
+
     short_n = config.alpha_insti_days_short
     long_n = config.alpha_insti_days_long
+    bb_short_n = config.bb_narrow_short_days
+    bb_long_n = config.bb_narrow_long_days
 
     # Evaluate conditions
     cond_insti = (
@@ -159,7 +179,20 @@ def _analyze_symbol(
         and float(volume) > float(vol_ma10)
     )
 
-    if not (cond_insti or cond_rsi or cond_macd or cond_vol_ma5 or cond_vol_ma10):
+    cond_bb_narrow = (
+        bb_bw_short_avg is not None
+        and bb_bw_long_avg is not None
+        and bb_bw_short_avg < bb_bw_long_avg
+    )
+
+    cond_bb_near_upper = (
+        bb_percent_b is not None
+        and not pd.isna(bb_percent_b)
+        and float(bb_percent_b) > config.bb_percent_b_min
+    )
+
+    if not (cond_insti or cond_rsi or cond_macd or cond_vol_ma5 or cond_vol_ma10
+            or cond_bb_narrow or cond_bb_near_upper):
         return None
 
     # Build reasons
@@ -181,6 +214,15 @@ def _analyze_symbol(
         reasons.append(f"量突破5MA：{int(volume):,} > {int(vol_ma5):,}")
     if cond_vol_ma10:
         reasons.append(f"量突破10MA：{int(volume):,} > {int(vol_ma10):,}")
+    if cond_bb_narrow:
+        reasons.append(
+            f"布林收窄：近{bb_short_n}日BW均{bb_bw_short_avg:.4f} < "
+            f"近{bb_long_n}日BW均{bb_bw_long_avg:.4f}"
+        )
+    if cond_bb_near_upper:
+        reasons.append(
+            f"接近布林上軌：%B={float(bb_percent_b):.2f} > {config.bb_percent_b_min}"
+        )
 
     return {
         "symbol": sym,
@@ -196,11 +238,18 @@ def _analyze_symbol(
         f"insti_net_{short_n}d_sum": insti_short_sum,
         f"insti_net_{short_n}d_avg": round(insti_short_avg, 0) if insti_short_avg else None,
         f"insti_net_{long_n}d_avg": round(insti_long_avg, 0) if insti_long_avg else None,
+        "bb_upper": round(float(bb_upper), 2) if pd.notna(bb_upper) else None,
+        "bb_bandwidth": round(float(bb_bandwidth), 4) if pd.notna(bb_bandwidth) else None,
+        "bb_percent_b": round(float(bb_percent_b), 4) if pd.notna(bb_percent_b) else None,
+        f"bb_bw_{bb_short_n}d_avg": round(bb_bw_short_avg, 4) if bb_bw_short_avg else None,
+        f"bb_bw_{bb_long_n}d_avg": round(bb_bw_long_avg, 4) if bb_bw_long_avg else None,
         "cond_insti": cond_insti,
         "cond_rsi": cond_rsi,
         "cond_macd": cond_macd,
         "cond_vol_ma5": cond_vol_ma5,
         "cond_vol_ma10": cond_vol_ma10,
+        "cond_bb_narrow": cond_bb_narrow,
+        "cond_bb_near_upper": cond_bb_near_upper,
         "reasons": "；".join(reasons),
     }
 

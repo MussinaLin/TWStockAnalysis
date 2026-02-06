@@ -16,6 +16,9 @@ class AppConfig:
     alpha_macd_hist_min: float
     alpha_insti_days_short: int
     alpha_insti_days_long: int
+    bb_narrow_short_days: int
+    bb_narrow_long_days: int
+    bb_percent_b_min: float
 
     @classmethod
     def from_env(cls) -> "AppConfig":
@@ -36,4 +39,7 @@ class AppConfig:
             alpha_macd_hist_min=float(os.getenv("ALPHA_MACD_HIST_MIN", "0")),
             alpha_insti_days_short=int(os.getenv("ALPHA_INSTI_DAYS_SHORT", "20")),
             alpha_insti_days_long=int(os.getenv("ALPHA_INSTI_DAYS_LONG", "30")),
+            bb_narrow_short_days=int(os.getenv("BB_NARROW_SHORT_DAYS", "5")),
+            bb_narrow_long_days=int(os.getenv("BB_NARROW_LONG_DAYS", "20")),
+            bb_percent_b_min=float(os.getenv("BB_PERCENT_B_MIN", "0.75")),
         )
