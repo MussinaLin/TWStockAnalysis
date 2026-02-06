@@ -19,6 +19,7 @@ class AppConfig:
     bb_narrow_short_days: int
     bb_narrow_long_days: int
     bb_percent_b_min: float
+    vol_breakout_ratio: float
 
     @classmethod
     def from_env(cls) -> "AppConfig":
@@ -42,4 +43,5 @@ class AppConfig:
             bb_narrow_short_days=int(os.getenv("BB_NARROW_SHORT_DAYS", "5")),
             bb_narrow_long_days=int(os.getenv("BB_NARROW_LONG_DAYS", "20")),
             bb_percent_b_min=float(os.getenv("BB_PERCENT_B_MIN", "0.75")),
+            vol_breakout_ratio=float(os.getenv("VOL_BREAKOUT_RATIO", "1.5")),
         )

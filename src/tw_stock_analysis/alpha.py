@@ -163,12 +163,14 @@ def _analyze_symbol(
         and float(macd_hist) > config.alpha_macd_hist_min
     )
 
+    vol_ratio = config.vol_breakout_ratio
+
     cond_vol_ma5 = (
         volume is not None
         and vol_ma5 is not None
         and not pd.isna(volume)
         and not pd.isna(vol_ma5)
-        and float(volume) > float(vol_ma5)
+        and float(volume) > float(vol_ma5) * vol_ratio
     )
 
     cond_vol_ma10 = (
@@ -176,7 +178,7 @@ def _analyze_symbol(
         and vol_ma10 is not None
         and not pd.isna(volume)
         and not pd.isna(vol_ma10)
-        and float(volume) > float(vol_ma10)
+        and float(volume) > float(vol_ma10) * vol_ratio
     )
 
     cond_bb_narrow = (
@@ -211,9 +213,9 @@ def _analyze_symbol(
     if cond_macd:
         reasons.append(f"MACD 多方：histogram {float(macd_hist):+.2f}")
     if cond_vol_ma5:
-        reasons.append(f"量突破5MA：{int(volume):,} > {int(vol_ma5):,}")
+        reasons.append(f"量突破5MA：{int(volume):,} > {int(vol_ma5):,}×{vol_ratio}")
     if cond_vol_ma10:
-        reasons.append(f"量突破10MA：{int(volume):,} > {int(vol_ma10):,}")
+        reasons.append(f"量突破10MA：{int(volume):,} > {int(vol_ma10):,}×{vol_ratio}")
     if cond_bb_narrow:
         reasons.append(
             f"布林收窄：近{bb_short_n}日BW均{bb_bw_short_avg:.4f} < "
