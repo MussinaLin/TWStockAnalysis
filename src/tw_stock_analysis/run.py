@@ -168,6 +168,7 @@ def _build_daily_rows(
         volume_lots = volume // 1000 if volume is not None else None
         vol_ma5_lots = int(indicators["vol_ma5"] // 1000) if indicators["vol_ma5"] else None
         vol_ma10_lots = int(indicators["vol_ma10"] // 1000) if indicators["vol_ma10"] else None
+        vol_ma20_lots = int(indicators["vol_ma20"] // 1000) if indicators["vol_ma20"] else None
         foreign_net_lots = foreign_net // 1000 if foreign_net is not None else None
         trust_net_lots = trust_net // 1000 if trust_net is not None else None
         dealer_net_lots = dealer_net // 1000 if dealer_net is not None else None
@@ -187,6 +188,7 @@ def _build_daily_rows(
             "volume": volume_lots,
             "vol_ma5": vol_ma5_lots,
             "vol_ma10": vol_ma10_lots,
+            "vol_ma20": vol_ma20_lots,
             "foreign_net": foreign_net_lots,
             "trust_net": trust_net_lots,
             "dealer_net": dealer_net_lots,
@@ -355,6 +357,7 @@ def _compute_indicators(
         "macd_hist": None,
         "vol_ma5": None,
         "vol_ma10": None,
+        "vol_ma20": None,
         "bb_upper": None,
         "bb_middle": None,
         "bb_lower": None,
@@ -367,6 +370,8 @@ def _compute_indicators(
         result["vol_ma5"] = vol_series.tail(5).mean()
     if len(vol_series) >= 10:
         result["vol_ma10"] = vol_series.tail(10).mean()
+    if len(vol_series) >= 20:
+        result["vol_ma20"] = vol_series.tail(20).mean()
 
     # RSI
     if len(price_series) >= 14:

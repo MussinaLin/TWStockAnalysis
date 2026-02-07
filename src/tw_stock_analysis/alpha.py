@@ -118,6 +118,7 @@ def _analyze_symbol(
     volume = r.get("volume")
     vol_ma5 = r.get("vol_ma5")
     vol_ma10 = r.get("vol_ma10")
+    vol_ma20 = r.get("vol_ma20")
     bb_upper = r.get("bb_upper")
     bb_bandwidth = r.get("bb_bandwidth")
     bb_percent_b = r.get("bb_percent_b")
@@ -181,6 +182,14 @@ def _analyze_symbol(
         and float(volume) > float(vol_ma10) * vol_ratio
     )
 
+    cond_vol_ma20 = (
+        volume is not None
+        and vol_ma20 is not None
+        and not pd.isna(volume)
+        and not pd.isna(vol_ma20)
+        and float(volume) > float(vol_ma20) * vol_ratio
+    )
+
     cond_bb_narrow = (
         bb_bw_short_avg is not None
         and bb_bw_long_avg is not None
@@ -194,7 +203,7 @@ def _analyze_symbol(
     )
 
     if not (cond_insti or cond_rsi or cond_macd or cond_vol_ma5 or cond_vol_ma10
-            or cond_bb_narrow or cond_bb_near_upper):
+            or cond_vol_ma20 or cond_bb_narrow or cond_bb_near_upper):
         return None
 
     # Build reasons
@@ -216,6 +225,8 @@ def _analyze_symbol(
         reasons.append(f"量突破5MA：{int(volume):,} > {int(vol_ma5):,}×{vol_ratio}")
     if cond_vol_ma10:
         reasons.append(f"量突破10MA：{int(volume):,} > {int(vol_ma10):,}×{vol_ratio}")
+    if cond_vol_ma20:
+        reasons.append(f"量突破20MA：{int(volume):,} > {int(vol_ma20):,}×{vol_ratio}")
     if cond_bb_narrow:
         reasons.append(
             f"布林收窄：近{bb_short_n}日BW均{bb_bw_short_avg:.4f} < "
@@ -233,6 +244,7 @@ def _analyze_symbol(
         "volume": volume,
         "vol_ma5": vol_ma5,
         "vol_ma10": vol_ma10,
+        "vol_ma20": vol_ma20,
         "rsi_14": round(float(rsi), 2) if pd.notna(rsi) else None,
         "macd": round(float(macd), 2) if pd.notna(macd) else None,
         "macd_signal": round(float(macd_signal), 2) if pd.notna(macd_signal) else None,
@@ -250,6 +262,7 @@ def _analyze_symbol(
         "cond_macd": cond_macd,
         "cond_vol_ma5": cond_vol_ma5,
         "cond_vol_ma10": cond_vol_ma10,
+        "cond_vol_ma20": cond_vol_ma20,
         "cond_bb_narrow": cond_bb_narrow,
         "cond_bb_near_upper": cond_bb_near_upper,
         "reasons": "；".join(reasons),
