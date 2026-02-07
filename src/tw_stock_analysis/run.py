@@ -75,6 +75,11 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="若 Excel 不存在，初始化回補歷史資料",
     )
+    parser.add_argument(
+        "--replay",
+        action="store_true",
+        help="復盤模式：讀取現有 Excel 資料進行 alpha 分析，不呼叫 API",
+    )
     return parser.parse_args()
 
 
@@ -539,6 +544,23 @@ def main() -> None:
     args = _parse_args()
     today = dt.datetime.now(TAIPEI_TZ).date()
     target_date = _parse_date(args.date) if args.date else today
+
+    # Replay mode: only run alpha analysis on existing data
+    if args.replay:
+        if not OUTPUT_FILE.exists():
+            print(f"復盤模式錯誤：{OUTPUT_FILE} 不存在")
+            return
+        sheet_names = get_sheet_names(OUTPUT_FILE)
+        target_sheet = target_date.isoformat()
+        if target_sheet not in sheet_names:
+            print(f"復盤模式錯誤：{OUTPUT_FILE} 中不存在 {target_sheet} sheet")
+            return
+        print(f"復盤模式：分析 {target_date} 及之前的資料")
+        build_alpha_sheet(
+            config, target_date, OUTPUT_FILE, ALPHA_FILE,
+            max_date=target_date, sheet_prefix="replay"
+        )
+        return
 
     session = requests.Session()
     session.headers.update({"User-Agent": "tw-stock-daily/0.1"})

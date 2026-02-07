@@ -1,19 +1,19 @@
-# 00987A 成份股每日分析
+# 台股每日分析工具
 
-這個專案每天抓取「主動台新優勢成長（00987A）」成份股，產出當天開盤/收盤價、三大法人買賣超，以及常用技術指標（RSI、MACD），寫入單一 Excel 檔 `tw_00987A_daily.xlsx`，每個交易日一個工作表。
+每天抓取指定股票的開盤/收盤價、三大法人買賣超，計算技術指標（RSI、MACD、布林通道），並進行 Alpha 選股分析。
 
 ## 功能重點
 
-- 自動抓取 00987A 成份股名單
-- 取得當天開盤價、收盤價
+- 從 `.env` 讀取要追蹤的股票清單
+- 取得每日 OHLCV（開高低收量）資料
 - 取得三大法人（外資、投信、自營商）買賣超
-- 計算 RSI(14)、MACD(12,26,9)
-- 依日期建立/更新 Excel 工作表
-- 支援指定日期與初始化回補歷史資料
+- 計算技術指標：RSI(14)、MACD、布林通道
+- Alpha 選股：根據多種條件篩選潛力股
+- 復盤模式：使用歷史資料進行回測分析
 
 ## 需求
 
-- Python 3.14+
+- Python 3.12+
 
 ## 安裝
 
@@ -24,89 +24,113 @@ pip install -U pip
 pip install -e .
 ```
 
-## 使用
+## 設定
 
-### 預設抓取當天
+複製 `.env.example` 為 `.env` 並設定股票清單：
 
 ```bash
-tw-00987a-daily
+cp .env.example .env
+```
+
+編輯 `.env`：
+
+```bash
+STOCKS=2330,2317,2454,3017,8299
+```
+
+詳細設定說明請參考 `.env.example`。
+
+## 使用方式
+
+### 抓取當天資料
+
+```bash
+tw-stock-analysis
 ```
 
 ### 指定日期
 
 ```bash
-tw-00987a-daily --date 2026-02-03
-```
-
-### 另外分析指定股票
-
-在 `.env` 設定：
-
-```bash
-STOCKS=2330,2317
-```
-
-程式會自動合併 00987A 成份股與 `STOCKS`，重複代號會被忽略，
-並嘗試從當日行情/三大法人資料補上股票名稱。
-
-### 初始化回補歷史資料（只在 Excel 不存在時）
-
-```bash
-tw-00987a-daily --init-backfill
+tw-stock-analysis --date 2025-10-15
 ```
 
 ### 回補最近 N 天
 
 ```bash
-tw-00987a-daily --backfill-days 90
+tw-stock-analysis --backfill-days 90
 ```
 
 ### 指定回補區間
 
 ```bash
-tw-00987a-daily --backfill-start 2025-10-01 --backfill-end 2026-02-03
+tw-stock-analysis --backfill-start 2025-08-01 --backfill-end 2025-10-15
 ```
 
-## 輸出
-
-- 檔案：`tw_00987A_daily.xlsx`
-- 工作表名稱：`YYYY-MM-DD`
-- 休市或資料未更新時，會寫入 `market_closed` 工作表
-  - 週末（六日）或 TWSE 資料無法取得時會判定休市並跳過寫入
-- 欄位（範例）：
-  - `symbol`, `name`, `open`, `close`, `high`, `low`, `volume`
-  - `foreign_net`, `trust_net`, `dealer_net`, `institutional_investors_net`
-  - `rsi_14`, `macd`, `macd_signal`, `macd_hist`
-
-## 上櫃歷史回補設定
-
-上櫃（TPEX）歷史行情/三大法人需要指定日期的官方 API，因此請設定環境變數模板：
+### 初始化回補（僅當 Excel 不存在時）
 
 ```bash
-# 也可以放在 .env 檔案中，程式會自動載入
-export TPEX_DAILY_QUOTES_URL_TEMPLATE='...{date}...'
-export TPEX_3INSTI_URL_TEMPLATE='...{date}...'
+tw-stock-analysis --init-backfill
 ```
 
-模板可使用 `{date}`（YYYY-MM-DD）或 `{roc}`（民國年 YYY/MM/DD）。
+### 復盤模式
 
-若未設定模板，程式仍可抓取「當日」上櫃資料，但無法回補指定日期。
+使用現有資料進行 Alpha 分析，不呼叫 API：
 
-## SSL 驗證設定
+```bash
+tw-stock-analysis --replay --date 2025-10-15
+```
 
-若遇到台新投信網站 SSL 憑證驗證失敗，程式已預設只對該網站關閉驗證。
+## 輸出檔案
 
-## 備註
+### tw_stock_daily.xlsx
 
-- 若當天資料尚未公告，程式會跳出提示並結束，不會寫入空白資料。
-- 技術指標需要歷史收盤價，第一次執行可能會出現 `NaN`，之後每天累積即可補齊。
+每日交易資料，每個交易日一個工作表。
+
+| 欄位 | 說明 |
+|------|------|
+| symbol, name | 股票代號、名稱 |
+| open, close, high, low | 開高低收 |
+| volume, vol_ma5, vol_ma10, vol_ma20 | 成交量及均量（張） |
+| foreign_net, trust_net, dealer_net | 三大法人買賣超（張） |
+| institutional_investors_net | 三大法人合計（張） |
+| rsi_14 | RSI(14) |
+| macd, macd_signal, macd_hist | MACD 指標 |
+| bb_upper, bb_middle, bb_lower | 布林通道上中下軌 |
+| bb_percent_b, bb_bandwidth | %B 及 bandwidth |
+
+### alpha_pick.xlsx
+
+Alpha 選股分析結果。
+
+- 一般模式：`alpha_YYYY-MM-DD`
+- 復盤模式：`replay_YYYY-MM-DD`
+
+## Alpha 選股條件
+
+任一條件成立即列入：
+
+| 條件 | 說明 |
+|------|------|
+| cond_insti | 法人加碼：近期淨買超 > 長期平均 |
+| cond_rsi | RSI 健康：介於設定區間內 |
+| cond_macd | MACD 多方：histogram > 0 |
+| cond_vol_ma5 | 量突破 5MA × N 倍 |
+| cond_vol_ma10 | 量突破 10MA × N 倍 |
+| cond_vol_ma20 | 量突破 20MA × N 倍 |
+| cond_bb_narrow | 布林收窄：近期 BW < 長期 BW |
+| cond_bb_near_upper | 接近上軌：%B > 設定值 |
+
+詳細參數設定請參考 `.env.example`。
 
 ## 資料來源
 
-- 00987A 成份股：台新投信 ETF 詳細頁面
-- 上市股票日資料（開收盤）：TWSE 股票日成交資訊
-- 上市股票日資料（當日）：TWSE OpenAPI STOCK_DAY_ALL
-- 上市股票日資料（回補/備援）：TWSE MI_INDEX
-- 上市三大法人：TWSE 三大法人買賣超 (T86)
-- 上櫃日行情：data.gov.tw 上櫃股票行情資料集
-- 上櫃三大法人：data.gov.tw 上櫃三大法人買賣超日報（股）明細
+- 上市股票：TWSE OpenAPI、STOCK_DAY、MI_INDEX
+- 上市三大法人：TWSE T86
+- 上櫃股票：TPEX 每日收盤行情
+- 上櫃三大法人：TPEX 三大法人買賣超
+
+## 備註
+
+- 若當天資料尚未公告，程式會跳過寫入
+- 技術指標需要足夠歷史資料，初期可能顯示空值
+- 週末及休市日會自動跳過

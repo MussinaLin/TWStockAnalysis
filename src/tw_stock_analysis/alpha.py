@@ -15,6 +15,8 @@ def build_alpha_sheet(
     target_date: dt.date,
     daily_file: Path,
     alpha_file: Path,
+    max_date: dt.date | None = None,
+    sheet_prefix: str = "alpha",
 ) -> None:
     """Analyse recent trading data and write alpha picks to Excel.
 
@@ -23,6 +25,8 @@ def build_alpha_sheet(
         target_date: Target date for analysis
         daily_file: Path to daily stock data Excel file
         alpha_file: Path to output alpha picks Excel file
+        max_date: If set, only consider sheets up to this date (for replay mode)
+        sheet_prefix: Prefix for output sheet name (default: "alpha")
     """
     if not daily_file.exists():
         print("尚無每日資料，無法產生 alpha 分析。")
@@ -36,6 +40,14 @@ def build_alpha_sheet(
     if not date_sheets:
         print("尚無每日交易資料，無法產生 alpha 分析。")
         return
+
+    # Filter sheets by max_date if specified (for replay mode)
+    if max_date is not None:
+        max_date_str = max_date.isoformat()
+        date_sheets = [s for s in date_sheets if s <= max_date_str]
+        if not date_sheets:
+            print(f"無 {max_date_str} 及之前的交易資料。")
+            return
 
     long_n = config.alpha_insti_days_long
     short_n = config.alpha_insti_days_short
@@ -75,7 +87,7 @@ def build_alpha_sheet(
         return
 
     alpha_df = pd.DataFrame(rows)
-    sheet_name = f"alpha_{target_date.isoformat()}"
+    sheet_name = f"{sheet_prefix}_{target_date.isoformat()}"
 
     if alpha_file.exists():
         with pd.ExcelWriter(
