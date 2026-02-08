@@ -111,15 +111,20 @@ Alpha 選股分析結果。
 
 ## Alpha 選股條件
 
-任一條件成立即列入：
+**必要條件**（全部必須成立）：
 
 | 條件 | 說明 |
 |------|------|
 | cond_insti | 法人加碼：近期淨買超 > 長期平均 |
-| cond_rsi | RSI 健康：介於設定區間內 |
-| cond_macd | MACD 多方：histogram > 0 |
 | cond_vol_ma10 | 量突破 10MA × N 倍 |
 | cond_vol_ma20 | 量突破 20MA × N 倍 |
+
+**選配條件**（至少 2 個成立）：
+
+| 條件 | 說明 |
+|------|------|
+| cond_rsi | RSI 健康：介於設定區間內 |
+| cond_macd | MACD 多方：histogram > 0 |
 | cond_bb_narrow | 布林收窄：近期 BW < 長期 BW |
 | cond_bb_near_upper | 接近上軌：%B > 設定值 |
 
