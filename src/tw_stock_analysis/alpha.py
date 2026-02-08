@@ -10,6 +10,141 @@ import pandas as pd
 from .config import AppConfig
 
 
+def build_alpha_sheets_batch(
+    config: AppConfig,
+    dates: list[dt.date],
+    daily_file: Path,
+    alpha_file: Path,
+    sheet_prefix: str = "replay",
+) -> None:
+    """Batch analyse multiple dates and write all results at once.
+
+    This is optimized for replay mode - loads Excel once and writes all at once.
+
+    Args:
+        config: Application configuration
+        dates: List of dates to analyze
+        daily_file: Path to daily stock data Excel file
+        alpha_file: Path to output alpha picks Excel file
+        sheet_prefix: Prefix for output sheet names
+    """
+    if not daily_file.exists():
+        print("尚無每日資料，無法產生 alpha 分析。")
+        return
+
+    if not dates:
+        print("無日期可分析。")
+        return
+
+    # Load Excel once
+    print(f"載入 {daily_file}...")
+    xls = pd.ExcelFile(daily_file)
+    all_date_sheets = sorted(
+        [s for s in xls.sheet_names if s != "market_closed"],
+        reverse=True
+    )
+    if not all_date_sheets:
+        print("尚無每日交易資料，無法產生 alpha 分析。")
+        return
+
+    # Determine max sheets needed
+    max_needed = max(config.alpha_insti_days_long, config.bb_narrow_long_days)
+
+    # Pre-load all sheets into memory
+    print(f"載入所有 sheets 到記憶體...")
+    all_sheets_data: dict[str, pd.DataFrame] = {}
+    for s in all_date_sheets:
+        all_sheets_data[s] = xls.parse(s)
+
+    # Process each date
+    results: dict[str, pd.DataFrame] = {}
+    for replay_date in dates:
+        max_date_str = replay_date.isoformat()
+
+        # Filter sheets up to this date
+        date_sheets = [s for s in all_date_sheets if s <= max_date_str]
+        if not date_sheets:
+            print(f"跳過 {max_date_str}：無此日期之前的資料")
+            continue
+
+        if max_date_str not in all_sheets_data:
+            print(f"跳過 {max_date_str}：sheet 不存在")
+            continue
+
+        # Get sheets needed for this date's analysis
+        needed_sheets = date_sheets[:max_needed]
+        recent = {s: all_sheets_data[s] for s in needed_sheets if s in all_sheets_data}
+
+        # Analyze
+        alpha_df = _analyze_date(config, date_sheets, recent)
+        if alpha_df is not None and not alpha_df.empty:
+            sheet_name = f"{sheet_prefix}_{max_date_str}"
+            results[sheet_name] = alpha_df
+            print(f"分析完成 {sheet_name}，共 {len(alpha_df)} 檔")
+        else:
+            print(f"跳過 {max_date_str}：無符合條件的股票")
+
+    if not results:
+        print("無分析結果可寫入。")
+        return
+
+    # Write all results at once
+    print(f"寫入 {len(results)} 個 sheets 到 {alpha_file}...")
+    if alpha_file.exists():
+        # Load existing sheets first
+        existing_xls = pd.ExcelFile(alpha_file)
+        existing_sheets = {s: existing_xls.parse(s) for s in existing_xls.sheet_names}
+        # Merge with new results (new overwrites existing)
+        existing_sheets.update(results)
+        with pd.ExcelWriter(alpha_file, engine="openpyxl", mode="w") as writer:
+            for sheet_name, df in existing_sheets.items():
+                df.to_excel(writer, sheet_name=sheet_name, index=False)
+    else:
+        with pd.ExcelWriter(alpha_file, engine="openpyxl", mode="w") as writer:
+            for sheet_name, df in results.items():
+                df.to_excel(writer, sheet_name=sheet_name, index=False)
+
+    print(f"批次寫入完成，共 {len(results)} 個 sheets")
+
+
+def _analyze_date(
+    config: AppConfig,
+    date_sheets: list[str],
+    recent: dict[str, pd.DataFrame],
+) -> pd.DataFrame | None:
+    """Analyze a single date using pre-loaded data."""
+    if not date_sheets or not recent:
+        return None
+
+    latest_sheet = date_sheets[0]
+    latest_df = recent.get(latest_sheet)
+    if latest_df is None or "symbol" not in latest_df.columns:
+        return None
+
+    symbols = latest_df["symbol"].astype(str).str.strip().tolist()
+
+    short_n = config.alpha_insti_days_short
+    long_n = config.alpha_insti_days_long
+    short_sheets = date_sheets[:short_n]
+    long_sheets = date_sheets[:long_n]
+    bb_short_sheets = date_sheets[:config.bb_narrow_short_days]
+    bb_long_sheets = date_sheets[:config.bb_narrow_long_days]
+
+    rows: list[dict] = []
+    for sym in symbols:
+        row_data = _analyze_symbol(
+            sym, latest_df, recent, short_sheets, long_sheets,
+            bb_short_sheets, bb_long_sheets, config
+        )
+        if row_data:
+            rows.append(row_data)
+
+    if not rows:
+        return None
+
+    return pd.DataFrame(rows)
+
+
 def build_alpha_sheet(
     config: AppConfig,
     target_date: dt.date,

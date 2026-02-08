@@ -11,7 +11,7 @@ import pandas as pd
 import requests
 from dotenv import load_dotenv
 
-from .alpha import build_alpha_sheet
+from .alpha import build_alpha_sheet, build_alpha_sheets_batch
 from .config import AppConfig
 from .excel_utils import (
     get_sheet_names,
@@ -566,22 +566,25 @@ def main() -> None:
 
         # Determine replay date range
         if args.replay_start or args.replay_end:
+            # Batch mode for date range - optimized
             replay_start = _parse_date(args.replay_start) if args.replay_start else target_date
             replay_end = _parse_date(args.replay_end) if args.replay_end else target_date
             replay_dates = _build_date_range(replay_start, replay_end)
-            print(f"復盤模式：分析 {replay_dates[0]} ~ {replay_dates[-1]} 共 {len(replay_dates)} 天")
+            print(f"復盤模式（批次）：分析 {replay_dates[0]} ~ {replay_dates[-1]} 共 {len(replay_dates)} 天")
+            build_alpha_sheets_batch(
+                config, replay_dates, OUTPUT_FILE, ALPHA_FILE,
+                sheet_prefix="replay"
+            )
         else:
-            replay_dates = [target_date]
+            # Single date mode
+            target_sheet = target_date.isoformat()
+            if target_sheet not in sheet_names:
+                print(f"復盤模式錯誤：{OUTPUT_FILE} 中不存在 {target_sheet} sheet")
+                return
             print(f"復盤模式：分析 {target_date} 及之前的資料")
-
-        for replay_date in replay_dates:
-            replay_sheet = replay_date.isoformat()
-            if replay_sheet not in sheet_names:
-                print(f"跳過 {replay_sheet}：sheet 不存在")
-                continue
             build_alpha_sheet(
-                config, replay_date, OUTPUT_FILE, ALPHA_FILE,
-                max_date=replay_date, sheet_prefix="replay"
+                config, target_date, OUTPUT_FILE, ALPHA_FILE,
+                max_date=target_date, sheet_prefix="replay"
             )
         return
 
