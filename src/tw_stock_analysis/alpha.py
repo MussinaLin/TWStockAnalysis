@@ -313,14 +313,6 @@ def _analyze_symbol(
 
     vol_ratio = config.vol_breakout_ratio
 
-    cond_vol_ma5 = (
-        volume is not None
-        and vol_ma5 is not None
-        and not pd.isna(volume)
-        and not pd.isna(vol_ma5)
-        and float(volume) > float(vol_ma5) * vol_ratio
-    )
-
     cond_vol_ma10 = (
         volume is not None
         and vol_ma10 is not None
@@ -349,7 +341,7 @@ def _analyze_symbol(
         and float(bb_percent_b) > config.bb_percent_b_min
     )
 
-    if not (cond_insti or cond_rsi or cond_macd or cond_vol_ma5 or cond_vol_ma10
+    if not (cond_insti or cond_rsi or cond_macd or cond_vol_ma10
             or cond_vol_ma20 or cond_bb_narrow or cond_bb_near_upper):
         return None
 
@@ -368,8 +360,6 @@ def _analyze_symbol(
         )
     if cond_macd:
         reasons.append(f"MACD 多方：histogram {float(macd_hist):+.2f}")
-    if cond_vol_ma5:
-        reasons.append(f"量突破5MA：{int(volume):,} > {int(vol_ma5):,}×{vol_ratio}")
     if cond_vol_ma10:
         reasons.append(f"量突破10MA：{int(volume):,} > {int(vol_ma10):,}×{vol_ratio}")
     if cond_vol_ma20:
@@ -407,7 +397,6 @@ def _analyze_symbol(
         "cond_insti": cond_insti,
         "cond_rsi": cond_rsi,
         "cond_macd": cond_macd,
-        "cond_vol_ma5": cond_vol_ma5,
         "cond_vol_ma10": cond_vol_ma10,
         "cond_vol_ma20": cond_vol_ma20,
         "cond_bb_narrow": cond_bb_narrow,

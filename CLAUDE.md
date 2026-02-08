@@ -66,7 +66,6 @@ All conditions use OR logic (any match triggers inclusion):
 | cond_insti | Institutional net buy: recent avg > long-term avg |
 | cond_rsi | RSI in healthy range (default 40-70) |
 | cond_macd | MACD histogram > threshold |
-| cond_vol_ma5 | Volume > 5MA × ratio |
 | cond_vol_ma10 | Volume > 10MA × ratio |
 | cond_vol_ma20 | Volume > 20MA × ratio |
 | cond_bb_narrow | Bollinger bandwidth narrowing |

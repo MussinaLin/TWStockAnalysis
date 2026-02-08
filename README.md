@@ -118,7 +118,6 @@ Alpha 選股分析結果。
 | cond_insti | 法人加碼：近期淨買超 > 長期平均 |
 | cond_rsi | RSI 健康：介於設定區間內 |
 | cond_macd | MACD 多方：histogram > 0 |
-| cond_vol_ma5 | 量突破 5MA × N 倍 |
 | cond_vol_ma10 | 量突破 10MA × N 倍 |
 | cond_vol_ma20 | 量突破 20MA × N 倍 |
 | cond_bb_narrow | 布林收窄：近期 BW < 長期 BW |
