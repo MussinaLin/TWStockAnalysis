@@ -4,7 +4,8 @@
       "Bash(tree:*)",
       "Bash(source .venv/bin/activate)",
       "Bash(tw-00987a-daily:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(tw-stock-analysis:*)"
     ]
   }
 }

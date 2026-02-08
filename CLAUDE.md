@@ -4,28 +4,32 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Taiwan stock analysis tool for 00987A (台新優勢成長ETF) constituent stocks. Fetches daily OHLCV data, three institutional investor (外資/投信/自營商) net buy/sell figures, and computes technical indicators (RSI-14, MACD) from multiple Taiwan exchange APIs. Output is written to Excel with one worksheet per trading date.
+Taiwan stock analysis tool that fetches daily OHLCV data, institutional investor net buy/sell figures, computes technical indicators (RSI, MACD, Bollinger Bands), and performs alpha stock picking analysis. Stocks are configured via `.env` file. Output is written to Excel files.
 
 ## Commands
 
 ```bash
-# Install (requires Python 3.13+)
+# Install (requires Python 3.12+)
 pip install -e .
 
 # Run (default: today's date in Taipei timezone)
-tw-00987a-daily
+tw-stock-analysis
 
 # Specify date
-tw-00987a-daily --date 2026-02-03
+tw-stock-analysis --date 2025-10-15
 
 # Initialize with 120-day backfill if Excel doesn't exist
-tw-00987a-daily --init-backfill
+tw-stock-analysis --init-backfill
 
 # Backfill last N days
-tw-00987a-daily --backfill-days 90
+tw-stock-analysis --backfill-days 90
 
 # Backfill date range
-tw-00987a-daily --backfill-start 2025-10-01 --backfill-end 2026-02-03
+tw-stock-analysis --backfill-start 2025-08-01 --backfill-end 2025-10-15
+
+# Replay mode (alpha analysis on existing data, no API calls)
+tw-stock-analysis --replay --date 2025-10-15
+tw-stock-analysis --replay-start 2025-10-01 --replay-end 2025-10-15
 
 # Lint
 ruff check src/
@@ -35,32 +39,77 @@ ruff check src/
 
 All source code is in `src/tw_stock_analysis/`. Entry point: `run.py:main()`.
 
-- **config.py** — `AppConfig` frozen dataclass loaded from `.env` (TPEX URL templates, extra stock symbols via `STOCKS` env var)
-- **sources.py** — Data fetching layer. Each `fetch_*` function hits a specific API and returns parsed DataFrames. Handles ROC/ISO date formats, encoding quirks, and CSV header detection. Raises `DataUnavailableError` on missing data.
-- **indicators.py** — `compute_rsi()` and `compute_macd()` operating on `pd.Series` of closing prices
-- **excel_utils.py** — `load_history()` reads historical closes from all dated sheets; `write_daily_sheet()` appends new date worksheets; tracks market closures in a `market_closed` sheet
-- **run.py** — Orchestration. `_build_daily_rows()` is the core aggregation function that merges data from multiple sources with a multi-level fallback chain, then computes technical indicators incrementally using in-memory history.
+### Core Modules
+
+- **run.py** — CLI entry point and orchestration. Handles data fetching, indicator computation, and output generation.
+- **config.py** — `AppConfig` frozen dataclass loaded from `.env`. Contains all configurable parameters (MACD, Bollinger Bands, alpha conditions).
+- **sources.py** — Data fetching layer. Each `fetch_*` function hits a specific API and returns parsed DataFrames. Handles ROC/ISO date formats and encoding quirks. Raises `DataUnavailableError` on missing data.
+- **prepare.py** — Data preparation and normalization. `_find_columns()` for fuzzy column matching, `prepare_*` functions to standardize DataFrames from different sources.
+- **indicators.py** — Technical indicator calculations: `compute_rsi()`, `compute_macd()`, `compute_bollinger_bands()`.
+- **alpha.py** — Alpha stock picking analysis. `build_alpha_sheet()` evaluates multiple conditions and writes results to Excel.
+- **excel_utils.py** — Excel I/O utilities. `load_history()` reads historical data; `write_daily_sheet()` appends new worksheets.
 
 ### Data Source Fallback Chain
 
-For each stock's daily price data, `_build_daily_rows()` tries in order:
+For each stock's daily price data, the system tries in order:
 1. TWSE STOCK_DAY_ALL (OpenAPI, current day all stocks)
 2. TWSE STOCK_DAY (per-stock monthly API, cached)
 3. TWSE MI_INDEX (market index fallback)
-4. TPEX daily quotes (for OTC stocks)
+4. TPEX daily quotes V2 (for OTC stocks)
 
-This ensures robustness when individual APIs are unavailable.
+### Alpha Picking Conditions
 
-### Column Matching
+All conditions use OR logic (any match triggers inclusion):
 
-`run.py` uses `_normalize_col()` and `_find_column()` for fuzzy keyword matching on column names from external data sources, since column headers vary across APIs and may contain BOM characters or inconsistent whitespace.
+| Condition | Description |
+|-----------|-------------|
+| cond_insti | Institutional net buy: recent avg > long-term avg |
+| cond_rsi | RSI in healthy range (default 40-70) |
+| cond_macd | MACD histogram > threshold |
+| cond_vol_ma5 | Volume > 5MA × ratio |
+| cond_vol_ma10 | Volume > 10MA × ratio |
+| cond_vol_ma20 | Volume > 20MA × ratio |
+| cond_bb_narrow | Bollinger bandwidth narrowing |
+| cond_bb_near_upper | %B > threshold (approaching upper band) |
+
+## Output Files
+
+- **tw_stock_daily.xlsx** — Daily trading data, one sheet per date
+- **alpha_pick.xlsx** — Alpha analysis results
+  - `alpha_YYYY-MM-DD` — Regular analysis
+  - `replay_YYYY-MM-DD` — Replay mode analysis
 
 ## Configuration
 
-Copy `.env.example` to `.env`. Key variables:
-- `TPEX_DAILY_QUOTES_URL_TEMPLATE` / `TPEX_3INSTI_URL_TEMPLATE` — URL templates with `{roc}` or `{iso}` date placeholders for TPEX historical backfill
-- `STOCKS` — Comma-separated extra stock symbols to include beyond 00987A constituents
+Copy `.env.example` to `.env`. Key sections:
 
-## Ruff
+```bash
+# Required: Stock list
+STOCKS=2330,2317,2454
 
-Line length is 100 (`pyproject.toml`).
+# MACD parameters
+MACD_FAST=8
+MACD_SLOW=17
+MACD_SIGNAL=9
+
+# Bollinger Bands
+BB_PERIOD=20
+BB_NARROW_SHORT_DAYS=5
+BB_NARROW_LONG_DAYS=20
+BB_PERCENT_B_MIN=0.75
+
+# Alpha conditions
+VOL_BREAKOUT_RATIO=1.5
+ALPHA_RSI_MIN=40
+ALPHA_RSI_MAX=70
+ALPHA_MACD_HIST_MIN=0
+ALPHA_INSTI_DAYS_SHORT=15
+ALPHA_INSTI_DAYS_LONG=30
+```
+
+See `.env.example` for full documentation of all parameters.
+
+## Code Style
+
+- Line length: 100 (configured in `pyproject.toml`)
+- Use `ruff check src/` for linting

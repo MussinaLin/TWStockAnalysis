@@ -77,7 +77,11 @@ tw-stock-analysis --init-backfill
 使用現有資料進行 Alpha 分析，不呼叫 API：
 
 ```bash
+# 單一日期
 tw-stock-analysis --replay --date 2025-10-15
+
+# 指定區間
+tw-stock-analysis --replay-start 2025-10-01 --replay-end 2025-10-15
 ```
 
 ## 輸出檔案

@@ -80,6 +80,18 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="復盤模式：讀取現有 Excel 資料進行 alpha 分析，不呼叫 API",
     )
+    parser.add_argument(
+        "--replay-start",
+        type=str,
+        default=None,
+        help="復盤起始日期 (YYYY-MM-DD)",
+    )
+    parser.add_argument(
+        "--replay-end",
+        type=str,
+        default=None,
+        help="復盤結束日期 (YYYY-MM-DD)",
+    )
     return parser.parse_args()
 
 
@@ -546,20 +558,31 @@ def main() -> None:
     target_date = _parse_date(args.date) if args.date else today
 
     # Replay mode: only run alpha analysis on existing data
-    if args.replay:
+    if args.replay or args.replay_start or args.replay_end:
         if not OUTPUT_FILE.exists():
             print(f"復盤模式錯誤：{OUTPUT_FILE} 不存在")
             return
         sheet_names = get_sheet_names(OUTPUT_FILE)
-        target_sheet = target_date.isoformat()
-        if target_sheet not in sheet_names:
-            print(f"復盤模式錯誤：{OUTPUT_FILE} 中不存在 {target_sheet} sheet")
-            return
-        print(f"復盤模式：分析 {target_date} 及之前的資料")
-        build_alpha_sheet(
-            config, target_date, OUTPUT_FILE, ALPHA_FILE,
-            max_date=target_date, sheet_prefix="replay"
-        )
+
+        # Determine replay date range
+        if args.replay_start or args.replay_end:
+            replay_start = _parse_date(args.replay_start) if args.replay_start else target_date
+            replay_end = _parse_date(args.replay_end) if args.replay_end else target_date
+            replay_dates = _build_date_range(replay_start, replay_end)
+            print(f"復盤模式：分析 {replay_dates[0]} ~ {replay_dates[-1]} 共 {len(replay_dates)} 天")
+        else:
+            replay_dates = [target_date]
+            print(f"復盤模式：分析 {target_date} 及之前的資料")
+
+        for replay_date in replay_dates:
+            replay_sheet = replay_date.isoformat()
+            if replay_sheet not in sheet_names:
+                print(f"跳過 {replay_sheet}：sheet 不存在")
+                continue
+            build_alpha_sheet(
+                config, replay_date, OUTPUT_FILE, ALPHA_FILE,
+                max_date=replay_date, sheet_prefix="replay"
+            )
         return
 
     session = requests.Session()
