@@ -60,14 +60,14 @@ For each stock's daily price data, the system tries in order:
 ### Alpha Picking Conditions
 
 Selection logic:
-1. **Required** (ALL must be true): cond_insti, cond_vol_ma10, cond_vol_ma20
+1. **Required**: cond_insti AND (cond_vol_ma10 OR cond_vol_ma20)
 2. **Optional** (at least 2 must be true): cond_rsi, cond_macd, cond_bb_narrow, cond_bb_near_upper
 
 | Condition | Type | Description |
 |-----------|------|-------------|
 | cond_insti | Required | Institutional net buy: recent avg > long-term avg |
-| cond_vol_ma10 | Required | Volume > 10MA × ratio |
-| cond_vol_ma20 | Required | Volume > 20MA × ratio |
+| cond_vol_ma10 | Required (either) | Volume > 10MA × ratio |
+| cond_vol_ma20 | Required (either) | Volume > 20MA × ratio |
 | cond_rsi | Optional | RSI in healthy range (default 40-70) |
 | cond_macd | Optional | MACD histogram > threshold |
 | cond_bb_narrow | Optional | Bollinger bandwidth narrowing |

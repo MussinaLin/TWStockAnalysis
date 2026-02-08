@@ -342,9 +342,9 @@ def _analyze_symbol(
     )
 
     # Selection logic:
-    # 1. Required: cond_insti AND cond_vol_ma10 AND cond_vol_ma20
+    # 1. Required: cond_insti AND (cond_vol_ma10 OR cond_vol_ma20)
     # 2. Optional: at least 2 of [cond_rsi, cond_macd, cond_bb_narrow, cond_bb_near_upper]
-    required_met = cond_insti and cond_vol_ma10 and cond_vol_ma20
+    required_met = cond_insti and (cond_vol_ma10 or cond_vol_ma20)
     optional_count = sum([cond_rsi, cond_macd, cond_bb_narrow, cond_bb_near_upper])
     optional_met = optional_count >= 2
 
