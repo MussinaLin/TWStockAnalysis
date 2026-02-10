@@ -11,7 +11,7 @@ import pandas as pd
 import requests
 from dotenv import load_dotenv
 
-from .alpha import build_alpha_sheet, build_alpha_sheets_batch
+from .alpha import build_alpha_sheet, build_alpha_sheets_batch, build_summary_sheet
 from .config import AppConfig
 from .excel_utils import (
     get_sheet_names,
@@ -91,6 +91,11 @@ def _parse_args() -> argparse.Namespace:
         type=str,
         default=None,
         help="復盤結束日期 (YYYY-MM-DD)",
+    )
+    parser.add_argument(
+        "--update-summary",
+        action="store_true",
+        help="僅更新 alpha_pick.xlsx 的 summary sheet",
     )
     return parser.parse_args()
 
@@ -556,6 +561,16 @@ def main() -> None:
     args = _parse_args()
     today = dt.datetime.now(TAIPEI_TZ).date()
     target_date = _parse_date(args.date) if args.date else today
+
+    # Update summary only mode
+    if args.update_summary:
+        if not ALPHA_FILE.exists():
+            print(f"錯誤：{ALPHA_FILE} 不存在")
+            return
+        print(f"更新 {ALPHA_FILE} 的 summary sheet...")
+        build_summary_sheet(ALPHA_FILE)
+        print("summary sheet 更新完成")
+        return
 
     # Replay mode: only run alpha analysis on existing data
     if args.replay or args.replay_start or args.replay_end:

@@ -84,6 +84,14 @@ tw-stock-analysis --replay --date 2025-10-15
 tw-stock-analysis --replay-start 2025-10-01 --replay-end 2025-10-15
 ```
 
+### 更新 Summary
+
+僅更新 alpha_pick.xlsx 的 summary sheet，不執行分析：
+
+```bash
+tw-stock-analysis --update-summary
+```
+
 ## 輸出檔案
 
 ### tw_stock_daily.xlsx
@@ -108,6 +116,7 @@ Alpha 選股分析結果。
 
 - 一般模式：`alpha_YYYY-MM-DD`
 - 復盤模式：`replay_YYYY-MM-DD`
+- `summary` sheet：股票出現頻率統計矩陣
 
 ## Alpha 選股條件
 

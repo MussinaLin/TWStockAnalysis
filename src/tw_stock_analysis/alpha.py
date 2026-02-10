@@ -106,6 +106,9 @@ def build_alpha_sheets_batch(
 
     print(f"批次寫入完成，共 {len(results)} 個 sheets")
 
+    # Update summary sheet
+    build_summary_sheet(alpha_file)
+
 
 def _analyze_date(
     config: AppConfig,
@@ -234,6 +237,9 @@ def build_alpha_sheet(
             alpha_df.to_excel(writer, sheet_name=sheet_name, index=False)
 
     print(f"Alpha 分析已寫入 {alpha_file} ({sheet_name})，共 {len(rows)} 檔")
+
+    # Update summary sheet
+    build_summary_sheet(alpha_file)
 
 
 def _analyze_symbol(
@@ -430,3 +436,94 @@ def _collect_values(
         if pd.notna(val):
             values.append(float(val))
     return values
+
+
+def build_summary_sheet(alpha_file: Path) -> None:
+    """Build a summary sheet showing stock appearance frequency across all sheets.
+
+    Args:
+        alpha_file: Path to alpha picks Excel file
+    """
+    if not alpha_file.exists():
+        return
+
+    xls = pd.ExcelFile(alpha_file)
+    # Get all alpha/replay sheets, exclude summary and market_closed
+    data_sheets = [
+        s for s in xls.sheet_names
+        if s not in ("summary", "market_closed")
+        and (s.startswith("alpha_") or s.startswith("replay_"))
+    ]
+
+    if not data_sheets:
+        return
+
+    # Collect stock appearances: {symbol: {name, dates}}
+    stock_data: dict[str, dict] = {}
+
+    for sheet_name in data_sheets:
+        # Extract date from sheet name (alpha_2025-10-15 or replay_2025-10-15)
+        date_part = sheet_name.split("_", 1)[1] if "_" in sheet_name else sheet_name
+
+        df = xls.parse(sheet_name)
+        if "symbol" not in df.columns:
+            continue
+
+        for _, row in df.iterrows():
+            sym = str(row.get("symbol", "")).strip()
+            if not sym:
+                continue
+            name = str(row.get("name", "")).strip()
+
+            if sym not in stock_data:
+                stock_data[sym] = {"name": name, "dates": set()}
+            stock_data[sym]["dates"].add(date_part)
+            # Update name if we have a better one
+            if name and not stock_data[sym]["name"]:
+                stock_data[sym]["name"] = name
+
+    if not stock_data:
+        return
+
+    # Get all unique dates, sorted
+    all_dates = sorted(set(
+        d for data in stock_data.values() for d in data["dates"]
+    ))
+
+    # Build summary DataFrame
+    rows = []
+    for sym in sorted(stock_data.keys()):
+        data = stock_data[sym]
+        row = {
+            "symbol": sym,
+            "name": data["name"],
+            "count": len(data["dates"]),
+        }
+        # Add date columns with ● marker
+        for date in all_dates:
+            # Use shorter date format for column header (MM-DD)
+            col_name = date[5:] if len(date) == 10 else date  # 2025-10-15 -> 10-15
+            row[col_name] = "●" if date in data["dates"] else ""
+        rows.append(row)
+
+    summary_df = pd.DataFrame(rows)
+
+    # Reorder columns: symbol, name, count, then dates
+    date_cols = [d[5:] if len(d) == 10 else d for d in all_dates]
+    col_order = ["symbol", "name", "count"] + date_cols
+    summary_df = summary_df[[c for c in col_order if c in summary_df.columns]]
+
+    # Write summary sheet
+    # Load all existing sheets and add/update summary
+    existing_sheets = {s: xls.parse(s) for s in xls.sheet_names if s != "summary"}
+    existing_sheets["summary"] = summary_df
+
+    with pd.ExcelWriter(alpha_file, engine="openpyxl", mode="w") as writer:
+        # Write summary first
+        summary_df.to_excel(writer, sheet_name="summary", index=False)
+        # Then other sheets
+        for sheet_name, df in existing_sheets.items():
+            if sheet_name != "summary":
+                df.to_excel(writer, sheet_name=sheet_name, index=False)
+
+    print(f"Summary 已更新：{len(stock_data)} 檔股票，{len(all_dates)} 個日期")
