@@ -102,6 +102,20 @@ tw-stock-analysis --update-shares
 
 注意：首次執行時會自動取得發行股數並儲存，之後讀取快取檔案。
 
+### 賣出警示分析
+
+僅執行賣出警示分析：
+
+```bash
+tw-stock-analysis --sell-analysis
+```
+
+不執行賣出警示（僅執行 alpha 分析）：
+
+```bash
+tw-stock-analysis --no-sell
+```
+
 ## 輸出檔案
 
 ### tw_stock_daily.xlsx
@@ -128,6 +142,13 @@ Alpha 選股分析結果。
 
 - 一般模式：`alpha_YYYY-MM-DD`
 - 復盤模式：`replay_YYYY-MM-DD`
+- `summary` sheet：股票出現頻率統計矩陣
+
+### alpha_sell.xlsx
+
+賣出警示分析結果。
+
+- `sell_YYYY-MM-DD`：每日賣出警示
 - `summary` sheet：股票出現頻率統計矩陣
 
 ### tw_stock_shares.xlsx
@@ -160,6 +181,24 @@ Alpha 選股分析結果。
 | cond_bb_near_upper | 接近上軌：%B > 設定值 |
 
 詳細參數設定請參考 `.env.example`。
+
+## Sell 賣出警示條件
+
+任一條件成立即列入警示（OR 邏輯）：
+
+| 條件 | 說明 |
+|------|------|
+| cond_foreign_sell | 外資近 N 日淨賣超 < 0 |
+| cond_foreign_accel | 外資賣超加速：近 N 日均 < 近 M 日均 |
+| cond_trust_sell | 投信近 N 日淨賣超 < 0 |
+| cond_trust_accel | 投信賣超加速：近 N 日均 < 近 M 日均 |
+| cond_high_black | 高檔爆量長黑 |
+| cond_price_up_vol_down | 價漲量縮 |
+| cond_rsi_overbought | RSI > 80（超買） |
+| cond_rsi_divergence | RSI 背離：股價創高但 RSI 未創高 |
+| cond_macd_turn_neg | MACD 柱由正轉負 |
+| cond_macd_divergence | MACD 背離：股價創高但 MACD 柱未創高 |
+| cond_bb_below | 跌破布林中軌：%B < 0.5 |
 
 ## 資料來源
 

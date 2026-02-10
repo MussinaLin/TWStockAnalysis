@@ -12,6 +12,7 @@ import requests
 from dotenv import load_dotenv
 
 from .alpha import build_alpha_sheet, build_alpha_sheets_batch, build_summary_sheet
+from .sell import build_sell_sheet, build_sell_sheets_batch
 from .config import AppConfig
 from .excel_utils import (
     get_sheet_names,
@@ -45,6 +46,7 @@ from .sources import (
 
 OUTPUT_FILE = Path("tw_stock_daily.xlsx")
 ALPHA_FILE = Path("alpha_pick.xlsx")
+SELL_FILE = Path("alpha_sell.xlsx")
 SHARES_FILE = Path("tw_stock_shares.xlsx")
 TAIPEI_TZ = ZoneInfo("Asia/Taipei")
 DEFAULT_BACKFILL_DAYS = 120
@@ -212,6 +214,16 @@ def _parse_args() -> argparse.Namespace:
         "--update-shares",
         action="store_true",
         help="更新發行股數資料至 tw_stock_shares.xlsx",
+    )
+    parser.add_argument(
+        "--sell-analysis",
+        action="store_true",
+        help="僅執行賣出警示分析",
+    )
+    parser.add_argument(
+        "--no-sell",
+        action="store_true",
+        help="不執行賣出警示分析（僅執行 alpha 分析）",
     )
     return parser.parse_args()
 
@@ -706,6 +718,15 @@ def main() -> None:
         _update_shares_command(session)
         return
 
+    # Sell analysis only mode
+    if args.sell_analysis:
+        if not OUTPUT_FILE.exists():
+            print(f"錯誤：{OUTPUT_FILE} 不存在")
+            return
+        print(f"執行賣出警示分析...")
+        build_sell_sheet(config, target_date, OUTPUT_FILE, SELL_FILE)
+        return
+
     # Replay mode: only run alpha analysis on existing data
     if args.replay or args.replay_start or args.replay_end:
         if not OUTPUT_FILE.exists():
@@ -730,6 +751,12 @@ def main() -> None:
                 config, replay_dates, OUTPUT_FILE, ALPHA_FILE,
                 sheet_prefix="replay"
             )
+            # Sell analysis (unless --no-sell)
+            if not args.no_sell:
+                build_sell_sheets_batch(
+                    config, replay_dates, OUTPUT_FILE, SELL_FILE,
+                    sheet_prefix="sell"
+                )
         else:
             # Single date mode
             target_sheet = target_date.isoformat()
@@ -741,6 +768,12 @@ def main() -> None:
                 config, target_date, OUTPUT_FILE, ALPHA_FILE,
                 max_date=target_date, sheet_prefix="replay"
             )
+            # Sell analysis (unless --no-sell)
+            if not args.no_sell:
+                build_sell_sheet(
+                    config, target_date, OUTPUT_FILE, SELL_FILE,
+                    max_date=target_date, sheet_prefix="sell"
+                )
         return
 
     session = requests.Session()
@@ -808,6 +841,10 @@ def main() -> None:
 
     # Generate alpha analysis
     build_alpha_sheet(config, target_date, OUTPUT_FILE, ALPHA_FILE)
+
+    # Generate sell analysis (unless --no-sell)
+    if not args.no_sell:
+        build_sell_sheet(config, target_date, OUTPUT_FILE, SELL_FILE)
 
 
 if __name__ == "__main__":

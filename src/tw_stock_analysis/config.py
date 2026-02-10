@@ -20,6 +20,14 @@ class AppConfig:
     bb_narrow_long_days: int
     bb_percent_b_min: float
     vol_breakout_ratio: float
+    # Sell alert settings
+    sell_insti_days_short: int
+    sell_insti_days_long: int
+    sell_high_black_ratio: float
+    sell_price_high_days: int
+    sell_volume_shrink_ratio: float
+    sell_bb_percent_b_max: float
+    sell_rsi_overbought: float
 
     @classmethod
     def from_env(cls) -> "AppConfig":
@@ -44,4 +52,12 @@ class AppConfig:
             bb_narrow_long_days=int(os.getenv("BB_NARROW_LONG_DAYS", "20")),
             bb_percent_b_min=float(os.getenv("BB_PERCENT_B_MIN", "0.75")),
             vol_breakout_ratio=float(os.getenv("VOL_BREAKOUT_RATIO", "1.5")),
+            # Sell alert settings
+            sell_insti_days_short=int(os.getenv("SELL_INSTI_DAYS_SHORT", "15")),
+            sell_insti_days_long=int(os.getenv("SELL_INSTI_DAYS_LONG", "30")),
+            sell_high_black_ratio=float(os.getenv("SELL_HIGH_BLACK_RATIO", "0.05")),
+            sell_price_high_days=int(os.getenv("SELL_PRICE_HIGH_DAYS", "10")),
+            sell_volume_shrink_ratio=float(os.getenv("SELL_VOLUME_SHRINK_RATIO", "0.7")),
+            sell_bb_percent_b_max=float(os.getenv("SELL_BB_PERCENT_B_MAX", "0.5")),
+            sell_rsi_overbought=float(os.getenv("SELL_RSI_OVERBOUGHT", "80")),
         )
