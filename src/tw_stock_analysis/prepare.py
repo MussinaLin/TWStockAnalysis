@@ -262,10 +262,11 @@ def prepare_twse_mi_index(df: pd.DataFrame) -> pd.DataFrame:
 def prepare_twse_issued_shares(df: pd.DataFrame) -> pd.DataFrame:
     """Prepare TWSE company basic data to extract issued shares.
 
-    Returns DataFrame with columns: symbol, issued_shares
+    Returns DataFrame with columns: symbol, name, issued_shares
     """
     cols = _find_columns(df, {
         "symbol": [["公司代號"], ["代號"]],
+        "name": [["公司簡稱"], ["公司名稱"], ["名稱"]],
         "issued_shares": [["已發行普通股數"], ["發行股數"]],
         "paid_in_capital": [["實收資本額"]],
         "par_value": [["普通股每股面額"], ["每股面額"]],
@@ -273,6 +274,7 @@ def prepare_twse_issued_shares(df: pd.DataFrame) -> pd.DataFrame:
 
     # Try to get issued shares directly, or calculate from capital/par value
     symbol_col = cols.get("symbol")
+    name_col = cols.get("name")
     issued_col = cols.get("issued_shares")
     capital_col = cols.get("paid_in_capital")
     par_col = cols.get("par_value")
@@ -282,6 +284,11 @@ def prepare_twse_issued_shares(df: pd.DataFrame) -> pd.DataFrame:
 
     result = pd.DataFrame()
     result["symbol"] = df[symbol_col].astype(str).str.strip()
+
+    if name_col:
+        result["name"] = df[name_col].astype(str).str.strip()
+    else:
+        result["name"] = ""
 
     if issued_col:
         result["issued_shares"] = df[issued_col].map(_clean_int)
@@ -311,16 +318,19 @@ def prepare_twse_issued_shares(df: pd.DataFrame) -> pd.DataFrame:
 def prepare_tpex_issued_shares(df: pd.DataFrame) -> pd.DataFrame:
     """Prepare TPEX company basic data to extract issued shares.
 
-    Returns DataFrame with columns: symbol, issued_shares
+    Returns DataFrame with columns: symbol, name, issued_shares
     """
     # TPEX JSON API uses English field names
     symbol_col = None
+    name_col = None
     issued_col = None
 
     for col in df.columns:
         col_lower = col.lower()
         if col_lower in ("securitiescompanycode", "companycode", "code"):
             symbol_col = col
+        elif col_lower in ("companyabbreviation", "companyname"):
+            name_col = col
         elif col_lower == "issueshares":
             issued_col = col
 
@@ -328,9 +338,11 @@ def prepare_tpex_issued_shares(df: pd.DataFrame) -> pd.DataFrame:
         # Fallback to Chinese column names
         cols = _find_columns(df, {
             "symbol": [["公司代號"], ["代號"]],
+            "name": [["公司簡稱"], ["公司名稱"], ["名稱"]],
             "issued_shares": [["已發行普通股數"], ["發行股數"]],
         })
         symbol_col = cols.get("symbol")
+        name_col = cols.get("name")
         issued_col = cols.get("issued_shares")
 
     if not symbol_col:
@@ -340,6 +352,10 @@ def prepare_tpex_issued_shares(df: pd.DataFrame) -> pd.DataFrame:
 
     result = pd.DataFrame()
     result["symbol"] = df[symbol_col].astype(str).str.strip()
+    if name_col:
+        result["name"] = df[name_col].astype(str).str.strip()
+    else:
+        result["name"] = ""
     result["issued_shares"] = df[issued_col].map(_clean_int)
 
     return result.dropna(subset=["issued_shares"])

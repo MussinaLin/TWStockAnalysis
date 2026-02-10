@@ -45,6 +45,7 @@ from .sources import (
 
 OUTPUT_FILE = Path("tw_stock_daily.xlsx")
 ALPHA_FILE = Path("alpha_pick.xlsx")
+SHARES_FILE = Path("tw_stock_shares.xlsx")
 TAIPEI_TZ = ZoneInfo("Asia/Taipei")
 DEFAULT_BACKFILL_DAYS = 120
 
@@ -52,27 +53,18 @@ DEFAULT_BACKFILL_DAYS = 120
 _issued_shares_cache: dict[str, int] = {}
 
 
-def _fetch_issued_shares(session: requests.Session) -> dict[str, int]:
-    """Fetch issued shares for all TWSE and TPEX stocks.
+def _fetch_issued_shares_from_api(session: requests.Session) -> pd.DataFrame:
+    """Fetch issued shares for all TWSE and TPEX stocks from API.
 
-    Returns dict mapping symbol to issued shares count.
-    Uses cache to avoid repeated API calls.
+    Returns DataFrame with columns: symbol, name, issued_shares
     """
-    global _issued_shares_cache
-    if _issued_shares_cache:
-        return _issued_shares_cache
-
-    result: dict[str, int] = {}
+    frames: list[pd.DataFrame] = []
 
     # Fetch TWSE listed companies
     try:
         twse_basic = fetch_twse_company_basic(session)
         twse_shares = prepare_twse_issued_shares(twse_basic)
-        for _, row in twse_shares.iterrows():
-            symbol = str(row["symbol"]).strip()
-            issued = row["issued_shares"]
-            if symbol and issued:
-                result[symbol] = int(issued)
+        frames.append(twse_shares)
         print(f"已取得 {len(twse_shares)} 筆上市公司發行股數")
     except (DataUnavailableError, requests.RequestException) as exc:
         print(f"取得 TWSE 公司發行股數失敗：{exc}")
@@ -81,17 +73,87 @@ def _fetch_issued_shares(session: requests.Session) -> dict[str, int]:
     try:
         tpex_basic = fetch_tpex_company_basic(session)
         tpex_shares = prepare_tpex_issued_shares(tpex_basic)
-        for _, row in tpex_shares.iterrows():
-            symbol = str(row["symbol"]).strip()
-            issued = row["issued_shares"]
-            if symbol and issued:
-                result[symbol] = int(issued)
+        frames.append(tpex_shares)
         print(f"已取得 {len(tpex_shares)} 筆上櫃公司發行股數")
     except (DataUnavailableError, requests.RequestException) as exc:
         print(f"取得 TPEX 公司發行股數失敗：{exc}")
 
-    _issued_shares_cache = result
-    return result
+    if not frames:
+        return pd.DataFrame(columns=["symbol", "name", "issued_shares"])
+
+    return pd.concat(frames, ignore_index=True)
+
+
+def _save_issued_shares(df: pd.DataFrame, file_path: Path) -> None:
+    """Save issued shares DataFrame to Excel file."""
+    today = dt.datetime.now(TAIPEI_TZ).date()
+    df = df.copy()
+    df["updated_at"] = today.isoformat()
+    df = df[["symbol", "name", "issued_shares", "updated_at"]]
+    df.to_excel(file_path, index=False, sheet_name="shares")
+    print(f"已儲存 {len(df)} 筆發行股數至 {file_path}")
+
+
+def _load_issued_shares(file_path: Path) -> dict[str, int]:
+    """Load issued shares from Excel file.
+
+    Returns dict mapping symbol to issued shares count.
+    """
+    if not file_path.exists():
+        return {}
+
+    try:
+        df = pd.read_excel(file_path, sheet_name="shares")
+        result: dict[str, int] = {}
+        for _, row in df.iterrows():
+            symbol = str(row["symbol"]).strip()
+            issued = row.get("issued_shares")
+            if symbol and pd.notna(issued):
+                result[symbol] = int(issued)
+        print(f"已從 {file_path} 載入 {len(result)} 筆發行股數")
+        return result
+    except Exception as exc:
+        print(f"載入發行股數失敗：{exc}")
+        return {}
+
+
+def _get_issued_shares(session: requests.Session) -> dict[str, int]:
+    """Get issued shares, loading from cache file or fetching from API.
+
+    If cache file doesn't exist, fetches from API and saves to file.
+    """
+    global _issued_shares_cache
+    if _issued_shares_cache:
+        return _issued_shares_cache
+
+    # Try to load from file first
+    if SHARES_FILE.exists():
+        _issued_shares_cache = _load_issued_shares(SHARES_FILE)
+        if _issued_shares_cache:
+            return _issued_shares_cache
+
+    # File doesn't exist or is empty, fetch from API and save
+    print(f"{SHARES_FILE} 不存在，正在從 API 取得發行股數...")
+    df = _fetch_issued_shares_from_api(session)
+    if not df.empty:
+        _save_issued_shares(df, SHARES_FILE)
+        for _, row in df.iterrows():
+            symbol = str(row["symbol"]).strip()
+            issued = row["issued_shares"]
+            if symbol and pd.notna(issued):
+                _issued_shares_cache[symbol] = int(issued)
+
+    return _issued_shares_cache
+
+
+def _update_shares_command(session: requests.Session) -> None:
+    """Command to update issued shares file."""
+    print("正在從 API 取得發行股數...")
+    df = _fetch_issued_shares_from_api(session)
+    if df.empty:
+        print("無法取得發行股數資料")
+        return
+    _save_issued_shares(df, SHARES_FILE)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -145,6 +207,11 @@ def _parse_args() -> argparse.Namespace:
         "--update-summary",
         action="store_true",
         help="僅更新 alpha_pick.xlsx 的 summary sheet",
+    )
+    parser.add_argument(
+        "--update-shares",
+        action="store_true",
+        help="更新發行股數資料至 tw_stock_shares.xlsx",
     )
     return parser.parse_args()
 
@@ -632,11 +699,24 @@ def main() -> None:
         print("summary sheet 更新完成")
         return
 
+    # Update shares only mode
+    if args.update_shares:
+        session = requests.Session()
+        session.headers.update({"User-Agent": "tw-stock-daily/0.1"})
+        _update_shares_command(session)
+        return
+
     # Replay mode: only run alpha analysis on existing data
     if args.replay or args.replay_start or args.replay_end:
         if not OUTPUT_FILE.exists():
             print(f"復盤模式錯誤：{OUTPUT_FILE} 不存在")
             return
+
+        # Load issued shares for consistency
+        session = requests.Session()
+        session.headers.update({"User-Agent": "tw-stock-daily/0.1"})
+        _get_issued_shares(session)
+
         sheet_names = get_sheet_names(OUTPUT_FILE)
 
         # Determine replay date range
@@ -672,8 +752,8 @@ def main() -> None:
 
     holdings = pd.DataFrame([{"symbol": s, "name": ""} for s in config.extra_stocks])
 
-    # Fetch issued shares for turnover rate calculation
-    issued_shares = _fetch_issued_shares(session)
+    # Get issued shares for turnover rate calculation (from cache file or API)
+    issued_shares = _get_issued_shares(session)
 
     history, volume_history = load_history(OUTPUT_FILE)
     sheet_names = get_sheet_names(OUTPUT_FILE)

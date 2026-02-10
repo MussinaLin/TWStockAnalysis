@@ -92,6 +92,16 @@ tw-stock-analysis --replay-start 2025-10-01 --replay-end 2025-10-15
 tw-stock-analysis --update-summary
 ```
 
+### 更新發行股數
+
+更新 tw_stock_shares.xlsx（週轉率計算用）：
+
+```bash
+tw-stock-analysis --update-shares
+```
+
+注意：首次執行時會自動取得發行股數並儲存，之後讀取快取檔案。
+
 ## 輸出檔案
 
 ### tw_stock_daily.xlsx
@@ -119,6 +129,17 @@ Alpha 選股分析結果。
 - 一般模式：`alpha_YYYY-MM-DD`
 - 復盤模式：`replay_YYYY-MM-DD`
 - `summary` sheet：股票出現頻率統計矩陣
+
+### tw_stock_shares.xlsx
+
+發行股數快取（週轉率計算用）。
+
+| 欄位 | 說明 |
+|------|------|
+| symbol | 股票代號 |
+| name | 股票名稱 |
+| issued_shares | 發行股數 |
+| updated_at | 更新日期 |
 
 ## Alpha 選股條件
 
