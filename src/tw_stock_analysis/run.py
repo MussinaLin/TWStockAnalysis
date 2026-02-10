@@ -23,15 +23,19 @@ from .excel_utils import (
 from .indicators import compute_bollinger_bands, compute_macd, compute_rsi
 from .prepare import (
     prepare_tpex_3insti,
+    prepare_tpex_issued_shares,
     prepare_tpex_quotes,
     prepare_twse_3insti,
     prepare_twse_day_all,
+    prepare_twse_issued_shares,
     prepare_twse_mi_index,
 )
 from .sources import (
     DataUnavailableError,
     fetch_tpex_3insti_v2,
+    fetch_tpex_company_basic,
     fetch_tpex_daily_quotes_v2,
+    fetch_twse_company_basic,
     fetch_twse_mi_index,
     fetch_twse_stock_day,
     fetch_twse_stock_day_all,
@@ -43,6 +47,51 @@ OUTPUT_FILE = Path("tw_stock_daily.xlsx")
 ALPHA_FILE = Path("alpha_pick.xlsx")
 TAIPEI_TZ = ZoneInfo("Asia/Taipei")
 DEFAULT_BACKFILL_DAYS = 120
+
+# Cache for issued shares (doesn't change often)
+_issued_shares_cache: dict[str, int] = {}
+
+
+def _fetch_issued_shares(session: requests.Session) -> dict[str, int]:
+    """Fetch issued shares for all TWSE and TPEX stocks.
+
+    Returns dict mapping symbol to issued shares count.
+    Uses cache to avoid repeated API calls.
+    """
+    global _issued_shares_cache
+    if _issued_shares_cache:
+        return _issued_shares_cache
+
+    result: dict[str, int] = {}
+
+    # Fetch TWSE listed companies
+    try:
+        twse_basic = fetch_twse_company_basic(session)
+        twse_shares = prepare_twse_issued_shares(twse_basic)
+        for _, row in twse_shares.iterrows():
+            symbol = str(row["symbol"]).strip()
+            issued = row["issued_shares"]
+            if symbol and issued:
+                result[symbol] = int(issued)
+        print(f"已取得 {len(twse_shares)} 筆上市公司發行股數")
+    except (DataUnavailableError, requests.RequestException) as exc:
+        print(f"取得 TWSE 公司發行股數失敗：{exc}")
+
+    # Fetch TPEX OTC companies
+    try:
+        tpex_basic = fetch_tpex_company_basic(session)
+        tpex_shares = prepare_tpex_issued_shares(tpex_basic)
+        for _, row in tpex_shares.iterrows():
+            symbol = str(row["symbol"]).strip()
+            issued = row["issued_shares"]
+            if symbol and issued:
+                result[symbol] = int(issued)
+        print(f"已取得 {len(tpex_shares)} 筆上櫃公司發行股數")
+    except (DataUnavailableError, requests.RequestException) as exc:
+        print(f"取得 TPEX 公司發行股數失敗：{exc}")
+
+    _issued_shares_cache = result
+    return result
 
 
 def _parse_args() -> argparse.Namespace:
@@ -149,6 +198,7 @@ def _build_daily_rows(
     tpex_3insti: pd.DataFrame,
     twse_month_cache: dict[tuple[str, dt.date], pd.DataFrame],
     config: AppConfig,
+    issued_shares: dict[str, int] | None = None,
 ) -> pd.DataFrame:
     """Build daily data rows for all holdings."""
     rows: list[dict] = []
@@ -200,6 +250,13 @@ def _build_daily_rows(
             else (foreign_net_lots or 0) + (trust_net_lots or 0) + (dealer_net_lots or 0)
         )
 
+        # Calculate turnover rate
+        turnover_rate = None
+        if issued_shares and volume is not None:
+            shares = issued_shares.get(symbol)
+            if shares and shares > 0:
+                turnover_rate = round(volume / shares * 100, 4)
+
         rows.append({
             "symbol": symbol,
             "name": name,
@@ -208,6 +265,7 @@ def _build_daily_rows(
             "high": high_price,
             "low": low_price,
             "volume": volume_lots,
+            "turnover_rate": turnover_rate,
             "vol_ma5": vol_ma5_lots,
             "vol_ma10": vol_ma10_lots,
             "vol_ma20": vol_ma20_lots,
@@ -437,6 +495,7 @@ def _run_for_date(
     config: AppConfig,
     today: dt.date,
     skip_existing: bool = False,
+    issued_shares: dict[str, int] | None = None,
 ) -> bool:
     """Process data for a single date."""
     sheet_name = date.isoformat()
@@ -538,6 +597,7 @@ def _run_for_date(
         tpex_3insti=tpex_3insti,
         twse_month_cache=twse_month_cache,
         config=config,
+        issued_shares=issued_shares,
     )
 
     if output_df.empty:
@@ -612,6 +672,9 @@ def main() -> None:
 
     holdings = pd.DataFrame([{"symbol": s, "name": ""} for s in config.extra_stocks])
 
+    # Fetch issued shares for turnover rate calculation
+    issued_shares = _fetch_issued_shares(session)
+
     history, volume_history = load_history(OUTPUT_FILE)
     sheet_names = get_sheet_names(OUTPUT_FILE)
     twse_month_cache: dict[tuple[str, dt.date], pd.DataFrame] = {}
@@ -629,6 +692,7 @@ def main() -> None:
                 session, date, holdings, history, volume_history,
                 sheet_names, twse_month_cache, config, today,
                 skip_existing=True,
+                issued_shares=issued_shares,
             )
         ran_backfill = True
 
@@ -649,6 +713,7 @@ def main() -> None:
                 session, date, holdings, history, volume_history,
                 sheet_names, twse_month_cache, config, today,
                 skip_existing=True,
+                issued_shares=issued_shares,
             )
         ran_backfill = True
 
@@ -658,6 +723,7 @@ def main() -> None:
             session, target_date, holdings, history, volume_history,
             sheet_names, twse_month_cache, config, today,
             skip_existing=False,
+            issued_shares=issued_shares,
         )
 
     # Generate alpha analysis

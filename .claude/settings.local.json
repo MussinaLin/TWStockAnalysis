@@ -5,7 +5,18 @@
       "Bash(source .venv/bin/activate)",
       "Bash(tw-00987a-daily:*)",
       "Bash(python3:*)",
-      "Bash(tw-stock-analysis:*)"
+      "Bash(tw-stock-analysis:*)",
+      "WebFetch(domain:www.wantgoo.com)",
+      "WebSearch",
+      "WebFetch(domain:openapi.twse.com.tw)",
+      "WebFetch(domain:www.twse.com.tw)",
+      "WebFetch(domain:www.tpex.org.tw)",
+      "WebFetch(domain:isin.twse.com.tw)",
+      "WebFetch(domain:data.nat.gov.tw)",
+      "WebFetch(domain:dts.twse.com.tw)",
+      "WebFetch(domain:mopsfin.twse.com.tw)",
+      "Bash(python -c:*)",
+      "Bash(curl:*)"
     ]
   }
 }

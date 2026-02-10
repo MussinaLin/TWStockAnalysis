@@ -102,7 +102,9 @@ tw-stock-analysis --update-summary
 |------|------|
 | symbol, name | 股票代號、名稱 |
 | open, close, high, low | 開高低收 |
-| volume, vol_ma5, vol_ma10, vol_ma20 | 成交量及均量（張） |
+| volume | 成交量（張） |
+| turnover_rate | 週轉率（%） |
+| vol_ma5, vol_ma10, vol_ma20 | 均量（張） |
 | foreign_net, trust_net, dealer_net | 三大法人買賣超（張） |
 | institutional_investors_net | 三大法人合計（張） |
 | rsi_14 | RSI(14) |
@@ -144,6 +146,7 @@ Alpha 選股分析結果。
 - 上市三大法人：TWSE T86
 - 上櫃股票：TPEX 每日收盤行情
 - 上櫃三大法人：TPEX 三大法人買賣超
+- 發行股數（週轉率計算）：TWSE/TPEX 公司基本資料
 
 ## 備註
 

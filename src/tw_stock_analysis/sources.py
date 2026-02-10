@@ -28,6 +28,8 @@ TPEX_DAILY_QUOTES_V2_URL = (
 TPEX_3INSTI_V2_URL = (
     "https://www.tpex.org.tw/www/zh-tw/insti/dailyTrade"
 )
+TWSE_COMPANY_BASIC_URL = "https://dts.twse.com.tw/opendata/t187ap03_L.csv"
+TPEX_COMPANY_BASIC_URL = "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O"
 
 
 class DataUnavailableError(RuntimeError):
@@ -530,3 +532,38 @@ def fetch_tpex_3insti_v2(
         df.columns = cols
 
     return df, data_date
+
+
+def fetch_twse_company_basic(session: requests.Session) -> pd.DataFrame:
+    """Fetch TWSE listed company basic info including issued shares."""
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    response = session.get(TWSE_COMPANY_BASIC_URL, timeout=30, verify=False)
+    response.raise_for_status()
+
+    content = response.content
+    for encoding in ("utf-8-sig", "cp950", "big5"):
+        try:
+            text = content.decode(encoding)
+            break
+        except UnicodeDecodeError:
+            text = ""
+    if not text:
+        raise DataUnavailableError("TWSE 公司基本資料解碼失敗")
+
+    df = pd.read_csv(io.StringIO(text))
+    return df
+
+
+def fetch_tpex_company_basic(session: requests.Session) -> pd.DataFrame:
+    """Fetch TPEX OTC company basic info including issued shares."""
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    response = session.get(TPEX_COMPANY_BASIC_URL, timeout=30, verify=False)
+    response.raise_for_status()
+    payload = response.json()
+
+    if not isinstance(payload, list):
+        raise DataUnavailableError("TPEX 公司基本資料回傳格式異常")
+    if not payload:
+        raise DataUnavailableError("TPEX 公司基本資料無資料")
+
+    return pd.DataFrame(payload)

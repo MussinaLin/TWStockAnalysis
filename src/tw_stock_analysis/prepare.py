@@ -257,3 +257,89 @@ def prepare_twse_mi_index(df: pd.DataFrame) -> pd.DataFrame:
         temp["volume"] = None
 
     return temp
+
+
+def prepare_twse_issued_shares(df: pd.DataFrame) -> pd.DataFrame:
+    """Prepare TWSE company basic data to extract issued shares.
+
+    Returns DataFrame with columns: symbol, issued_shares
+    """
+    cols = _find_columns(df, {
+        "symbol": [["公司代號"], ["代號"]],
+        "issued_shares": [["已發行普通股數"], ["發行股數"]],
+        "paid_in_capital": [["實收資本額"]],
+        "par_value": [["普通股每股面額"], ["每股面額"]],
+    })
+
+    # Try to get issued shares directly, or calculate from capital/par value
+    symbol_col = cols.get("symbol")
+    issued_col = cols.get("issued_shares")
+    capital_col = cols.get("paid_in_capital")
+    par_col = cols.get("par_value")
+
+    if not symbol_col:
+        raise DataUnavailableError("TWSE 公司基本資料缺少代號欄位")
+
+    result = pd.DataFrame()
+    result["symbol"] = df[symbol_col].astype(str).str.strip()
+
+    if issued_col:
+        result["issued_shares"] = df[issued_col].map(_clean_int)
+    elif capital_col and par_col:
+        # Calculate: issued_shares = paid_in_capital / par_value
+        def _extract_par_value(val):
+            if pd.isna(val):
+                return None
+            text = str(val)
+            # Extract number from "新台幣 10.0000元"
+            match = re.search(r"([\d.]+)", text)
+            if match:
+                return float(match.group(1))
+            return _clean_number(text)
+
+        capital = df[capital_col].map(_clean_int)
+        par = df[par_col].map(_extract_par_value)
+        result["issued_shares"] = (capital / par).map(
+            lambda x: int(x) if pd.notna(x) else None
+        )
+    else:
+        raise DataUnavailableError("TWSE 公司基本資料缺少發行股數或資本額/面額欄位")
+
+    return result.dropna(subset=["issued_shares"])
+
+
+def prepare_tpex_issued_shares(df: pd.DataFrame) -> pd.DataFrame:
+    """Prepare TPEX company basic data to extract issued shares.
+
+    Returns DataFrame with columns: symbol, issued_shares
+    """
+    # TPEX JSON API uses English field names
+    symbol_col = None
+    issued_col = None
+
+    for col in df.columns:
+        col_lower = col.lower()
+        if col_lower in ("securitiescompanycode", "companycode", "code"):
+            symbol_col = col
+        elif col_lower == "issueshares":
+            issued_col = col
+
+    if not symbol_col:
+        # Fallback to Chinese column names
+        cols = _find_columns(df, {
+            "symbol": [["公司代號"], ["代號"]],
+            "issued_shares": [["已發行普通股數"], ["發行股數"]],
+        })
+        symbol_col = cols.get("symbol")
+        issued_col = cols.get("issued_shares")
+
+    if not symbol_col:
+        raise DataUnavailableError("TPEX 公司基本資料缺少代號欄位")
+    if not issued_col:
+        raise DataUnavailableError("TPEX 公司基本資料缺少發行股數欄位")
+
+    result = pd.DataFrame()
+    result["symbol"] = df[symbol_col].astype(str).str.strip()
+    result["issued_shares"] = df[issued_col].map(_clean_int)
+
+    return result.dropna(subset=["issued_shares"])
