@@ -107,7 +107,11 @@ tw-stock-analysis --update-shares
 僅執行賣出警示分析：
 
 ```bash
-tw-stock-analysis --sell-analysis
+# 單一日期
+tw-stock-analysis --sell-analysis --date 2025-01-21
+
+# 指定區間
+tw-stock-analysis --sell-start 2025-01-01 --sell-end 2025-01-21
 ```
 
 不執行賣出警示（僅執行 alpha 分析）：
@@ -189,9 +193,9 @@ Alpha 選股分析結果。
 | 條件 | 說明 |
 |------|------|
 | cond_foreign_sell | 外資近 N 日淨賣超 < 0 |
-| cond_foreign_accel | 外資賣超加速：近 N 日均 < 近 M 日均 |
+| cond_foreign_accel | 外資賣超加速：近 N 日均 < 0 且 < 近 M 日均 |
 | cond_trust_sell | 投信近 N 日淨賣超 < 0 |
-| cond_trust_accel | 投信賣超加速：近 N 日均 < 近 M 日均 |
+| cond_trust_accel | 投信賣超加速：近 N 日均 < 0 且 < 近 M 日均 |
 | cond_high_black | 高檔爆量長黑 |
 | cond_price_up_vol_down | 價漲量縮 |
 | cond_rsi_overbought | RSI > 80（超買） |

@@ -221,6 +221,18 @@ def _parse_args() -> argparse.Namespace:
         help="僅執行賣出警示分析",
     )
     parser.add_argument(
+        "--sell-start",
+        type=str,
+        default=None,
+        help="賣出分析起始日期 (YYYY-MM-DD)",
+    )
+    parser.add_argument(
+        "--sell-end",
+        type=str,
+        default=None,
+        help="賣出分析結束日期 (YYYY-MM-DD)",
+    )
+    parser.add_argument(
         "--no-sell",
         action="store_true",
         help="不執行賣出警示分析（僅執行 alpha 分析）",
@@ -719,12 +731,22 @@ def main() -> None:
         return
 
     # Sell analysis only mode
-    if args.sell_analysis:
+    if args.sell_analysis or args.sell_start or args.sell_end:
         if not OUTPUT_FILE.exists():
             print(f"錯誤：{OUTPUT_FILE} 不存在")
             return
-        print(f"執行賣出警示分析...")
-        build_sell_sheet(config, target_date, OUTPUT_FILE, SELL_FILE)
+
+        if args.sell_start or args.sell_end:
+            # Batch mode for date range
+            sell_start = _parse_date(args.sell_start) if args.sell_start else target_date
+            sell_end = _parse_date(args.sell_end) if args.sell_end else target_date
+            sell_dates = _build_date_range(sell_start, sell_end)
+            print(f"賣出分析（批次）：分析 {sell_dates[0]} ~ {sell_dates[-1]} 共 {len(sell_dates)} 天")
+            build_sell_sheets_batch(config, sell_dates, OUTPUT_FILE, SELL_FILE)
+        else:
+            # Single date mode
+            print(f"執行賣出警示分析...")
+            build_sell_sheet(config, target_date, OUTPUT_FILE, SELL_FILE)
         return
 
     # Replay mode: only run alpha analysis on existing data
