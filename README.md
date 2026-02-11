@@ -102,16 +102,16 @@ tw-stock-analysis --update-shares
 
 注意：首次執行時會自動取得發行股數並儲存，之後讀取快取檔案。
 
-### 賣出警示分析
+### 賣出警示分析（復盤）
 
 僅執行賣出警示分析：
 
 ```bash
 # 單一日期
-tw-stock-analysis --sell-analysis --date 2025-01-21
+tw-stock-analysis --replay-sell-analysis --date 2025-01-21
 
 # 指定區間
-tw-stock-analysis --sell-start 2025-01-01 --sell-end 2025-01-21
+tw-stock-analysis --replay-sell-analysis-start 2025-01-01 --replay-sell-analysis-end 2025-01-21
 ```
 
 不執行賣出警示（僅執行 alpha 分析）：
@@ -144,8 +144,7 @@ tw-stock-analysis --no-sell
 
 Alpha 選股分析結果。
 
-- 一般模式：`alpha_YYYY-MM-DD`
-- 復盤模式：`replay_YYYY-MM-DD`
+- `alpha_YYYY-MM-DD`：每日選股結果
 - `summary` sheet：股票出現頻率統計矩陣
 
 ### alpha_sell.xlsx
