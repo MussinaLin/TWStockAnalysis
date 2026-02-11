@@ -238,6 +238,8 @@ def _analyze_symbol_sell(
     close = r.get("close")
     high = r.get("high")
     rsi = r.get("rsi_14")
+    macd = r.get("macd")
+    macd_signal = r.get("macd_signal")
     macd_hist = r.get("macd_hist")
     volume = r.get("volume")
     vol_ma10 = r.get("vol_ma10")
@@ -309,13 +311,13 @@ def _analyze_symbol_sell(
     # 5. High volume long black candle
     cond_high_black = False
     if (
-        high is not None and close is not None and open_price is not None
+        high is not None and close is not None
         and volume is not None and vol_ma10 is not None
-        and pd.notna(high) and pd.notna(close) and pd.notna(open_price)
+        and pd.notna(high) and pd.notna(close)
         and pd.notna(volume) and pd.notna(vol_ma10)
     ):
         upper_shadow = float(high) - float(close)
-        threshold = float(open_price) * config.sell_high_black_ratio
+        threshold = float(high) * config.sell_high_black_ratio
         vol_breakout = float(volume) > float(vol_ma10) * config.vol_breakout_ratio
         cond_high_black = upper_shadow > threshold and vol_breakout
 
@@ -376,6 +378,23 @@ def _analyze_symbol_sell(
         and float(bb_percent_b) < config.sell_bb_percent_b_max
     )
 
+    # 12. MACD death cross at high level
+    cond_macd_death_cross = False
+    if (
+        macd is not None and macd_signal is not None
+        and pd.notna(macd) and pd.notna(macd_signal)
+        and len(macd_hist_history) >= 2
+    ):
+        today_hist = macd_hist_history[0]
+        yesterday_hist = macd_hist_history[1]
+        cond_macd_death_cross = (
+            float(macd) > 0
+            and float(macd_signal) > 0
+            and today_hist < 0
+            and yesterday_hist < 0
+            and today_hist < yesterday_hist
+        )
+
     # Check if any condition is met (OR logic)
     any_condition_met = any([
         cond_foreign_sell,
@@ -389,6 +408,7 @@ def _analyze_symbol_sell(
         cond_macd_turn_neg,
         cond_macd_divergence,
         cond_bb_below,
+        cond_macd_death_cross,
     ])
 
     if not any_condition_met:
@@ -405,7 +425,7 @@ def _analyze_symbol_sell(
     if cond_trust_accel:
         reasons.append(f"投信賣超加速：近{short_n}日均{trust_short_avg:+,.0f}<近{long_n}日均{trust_long_avg:+,.0f}")
     if cond_high_black:
-        reasons.append(f"高檔爆量長黑：上影線>{config.sell_high_black_ratio*100:.0f}%開盤價")
+        reasons.append(f"高檔爆量長黑：上影線>{config.sell_high_black_ratio*100:.0f}%最高價")
     if cond_price_up_vol_down:
         reasons.append(f"價漲量縮：創{price_high_days}日新高但量縮")
     if cond_rsi_overbought:
@@ -418,6 +438,8 @@ def _analyze_symbol_sell(
         reasons.append(f"MACD背離：股價創{price_high_days}日高但MACD柱未創高")
     if cond_bb_below:
         reasons.append(f"跌破布林中軌：%B={float(bb_percent_b):.2f}<{config.sell_bb_percent_b_max}")
+    if cond_macd_death_cross:
+        reasons.append(f"MACD高檔死叉：MACD={float(macd):.2f}>0，柱連兩日負且加速")
 
     # Count how many conditions are met
     conditions_met = sum([
@@ -432,6 +454,7 @@ def _analyze_symbol_sell(
         cond_macd_turn_neg,
         cond_macd_divergence,
         cond_bb_below,
+        cond_macd_death_cross,
     ])
 
     return {
@@ -460,6 +483,7 @@ def _analyze_symbol_sell(
         "cond_macd_turn_neg": cond_macd_turn_neg,
         "cond_macd_divergence": cond_macd_divergence,
         "cond_bb_below": cond_bb_below,
+        "cond_macd_death_cross": cond_macd_death_cross,
         "conditions_met": conditions_met,
         "reasons": "；".join(reasons),
     }

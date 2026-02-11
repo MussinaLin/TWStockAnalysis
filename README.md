@@ -202,6 +202,7 @@ Alpha 選股分析結果。
 | cond_macd_turn_neg | MACD 柱由正轉負 |
 | cond_macd_divergence | MACD 背離：股價創高但 MACD 柱未創高 |
 | cond_bb_below | 跌破布林中軌：%B < 0.5 |
+| cond_macd_death_cross | MACD 高檔死叉：MACD/Signal > 0 且柱連兩日負且加速 |
 
 ## 資料來源
 
