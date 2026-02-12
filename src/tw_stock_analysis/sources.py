@@ -572,12 +572,29 @@ def fetch_tpex_company_basic(session: requests.Session) -> pd.DataFrame:
     return pd.DataFrame(payload)
 
 
+def _parse_roc_date_compact(value: str) -> dt.date | None:
+    """Parse ROC date in compact format like '1150211' (YYYMMDD)."""
+    text = value.strip()
+    if not text or len(text) != 7:
+        return None
+    try:
+        year = int(text[:3]) + 1911
+        month = int(text[3:5])
+        day = int(text[5:7])
+        return dt.date(year, month, day)
+    except (ValueError, IndexError):
+        return None
+
+
 def fetch_twse_margin(session: requests.Session) -> tuple[pd.DataFrame, dt.date | None]:
     """Fetch TWSE margin trading data for all listed stocks (today only).
 
     Returns DataFrame and data date. The DataFrame has Chinese column names.
     Key columns: 股票代號, 融資買進, 融資賣出, 融資現金償還, 融資今日餘額,
                  融券賣出, 融券買進, 融券現券償還, 融券今日餘額
+
+    Note: TWSE OpenAPI does not return date in record, returns None for date.
+    Caller should assume data is for today when date is None.
     """
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     response = session.get(TWSE_MARGIN_URL, timeout=30, verify=False)
@@ -589,17 +606,9 @@ def fetch_twse_margin(session: requests.Session) -> tuple[pd.DataFrame, dt.date 
     if not payload:
         raise DataUnavailableError("TWSE MI_MARGN 無資料")
 
-    # Extract date from first record
-    data_date = None
-    sample = payload[0]
-    if isinstance(sample, dict):
-        for key in ("Date", "date", "日期"):
-            if key in sample:
-                data_date = _parse_date_any(str(sample.get(key, "")))
-                if data_date:
-                    break
-
-    return pd.DataFrame(payload), data_date
+    # TWSE OpenAPI doesn't include date in records, return None
+    # Caller should assume it's today's data
+    return pd.DataFrame(payload), None
 
 
 def fetch_tpex_margin(session: requests.Session) -> tuple[pd.DataFrame, dt.date | None]:
@@ -621,12 +630,19 @@ def fetch_tpex_margin(session: requests.Session) -> tuple[pd.DataFrame, dt.date 
         raise DataUnavailableError("TPEX margin 無資料")
 
     # Extract date from first record
+    # TPEX uses compact ROC format like "1150211" (YYY/MM/DD without separators)
     data_date = None
     sample = payload[0]
     if isinstance(sample, dict):
         for key in ("Date", "date", "日期", "ReportDate"):
             if key in sample:
-                data_date = _parse_date_any(str(sample.get(key, "")))
+                date_str = str(sample.get(key, ""))
+                # Try compact ROC format first (e.g., "1150211")
+                data_date = _parse_roc_date_compact(date_str)
+                if data_date:
+                    break
+                # Fallback to other formats
+                data_date = _parse_date_any(date_str)
                 if data_date:
                     break
 
@@ -668,16 +684,64 @@ def fetch_moneydj_margin(
     except ValueError as exc:
         raise DataUnavailableError(f"MoneyDJ 融資融券頁面解析失敗：{exc}") from exc
 
-    # Find the margin data table by looking for expected columns
+    # Find the margin data table - it's typically the largest table with date data
+    # MoneyDJ table structure:
+    # - Row 5: top-level headers (融資, 融券)
+    # - Row 6: sub-headers (日期, 買進, 賣出, 現償, 餘額, 增減, ...)
+    # - Row 7+: data rows
     target_table = None
     for table in tables:
-        cols = [str(c).strip() for c in table.columns]
-        # Look for table with 日期 and 融資 columns
-        if any("日期" in c for c in cols) and any("融資" in c for c in cols):
-            target_table = table
-            break
+        # Check if table has enough rows and columns for margin data
+        if len(table) < 8 or len(table.columns) < 12:
+            continue
+        # Check if row 6 contains "日期" (date header)
+        row6 = table.iloc[6] if len(table) > 6 else None
+        if row6 is not None:
+            row6_str = " ".join(str(v) for v in row6.values if pd.notna(v))
+            if "日期" in row6_str and ("買進" in row6_str or "賣出" in row6_str):
+                target_table = table
+                break
 
     if target_table is None:
         raise DataUnavailableError("MoneyDJ 找不到融資融券表格")
 
-    return target_table
+    # Extract data rows (skip header rows 0-6)
+    data_rows = target_table.iloc[7:].copy()
+
+    # Filter out summary rows (contain "合計" or non-date values in first column)
+    def _is_valid_date_row(val):
+        if pd.isna(val):
+            return False
+        text = str(val).strip()
+        # Valid ROC date format: 115/02/11
+        return bool(re.match(r"^\d{2,3}/\d{1,2}/\d{1,2}$", text))
+
+    valid_mask = data_rows.iloc[:, 0].apply(_is_valid_date_row)
+    data_rows = data_rows[valid_mask]
+
+    if data_rows.empty:
+        raise DataUnavailableError("MoneyDJ 融資融券無有效資料")
+
+    # MoneyDJ column mapping (0-indexed):
+    # 0: 日期, 1: 融資買進, 2: 融資賣出, 3: 融資現償, 4: 融資餘額, 5: 融資增減,
+    # 6: 融資限額, 7: 融資使用率, 8: 融券賣出, 9: 融券買進, 10: 融券券償,
+    # 11: 融券餘額, 12: 融券增減, 13: 券資比, 14: 資券相抵
+    col_map = {
+        0: "date",
+        1: "margin_buy",
+        2: "margin_sell",
+        4: "margin_balance",
+        5: "margin_change",
+        8: "short_sell",
+        9: "short_buy",
+        11: "short_balance",
+        12: "short_change",
+        13: "short_margin_ratio",
+    }
+
+    result = pd.DataFrame()
+    for idx, col_name in col_map.items():
+        if idx < len(data_rows.columns):
+            result[col_name] = data_rows.iloc[:, idx].values
+
+    return result

@@ -21,7 +21,8 @@
       "WebFetch(domain:github.com)",
       "Bash(ruff check:*)",
       "Bash(python -m ruff check:*)",
-      "Bash(pip install:*)"
+      "Bash(pip install:*)",
+      "Bash(python -m tw_stock_analysis.run:*)"
     ]
   }
 }

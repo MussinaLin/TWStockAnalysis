@@ -520,28 +520,14 @@ def prepare_tpex_margin(df: pd.DataFrame) -> pd.DataFrame:
 def prepare_moneydj_margin(df: pd.DataFrame) -> pd.DataFrame:
     """Prepare MoneyDJ margin trading data into standard format.
 
-    Input DataFrame from MoneyDJ HTML table with columns like:
-    日期(民國), 融資買進, 融資賣出, 融資餘額, 融資增減, 融券賣出, 融券買進, 融券餘額, 融券增減
+    Input DataFrame from fetch_moneydj_margin with columns:
+    date, margin_buy, margin_sell, margin_balance, margin_change,
+    short_sell, short_buy, short_balance, short_change
 
-    Returns DataFrame with columns: date, margin_buy, margin_sell, margin_balance,
-                                    margin_change, short_sell, short_buy, short_balance,
-                                    short_change (units: lots/張)
+    Returns DataFrame with same columns but with parsed dates and cleaned integers.
+    Units: lots/張 (already in lots from MoneyDJ)
     """
-    # Find columns by keyword matching
-    cols = _find_columns(df, {
-        "date": [["日期"]],
-        "margin_buy": [["融資買進"], ["融資", "買進"]],
-        "margin_sell": [["融資賣出"], ["融資", "賣出"]],
-        "margin_balance": [["融資餘額"], ["融資", "餘額"]],
-        "margin_change": [["融資增減"], ["融資", "增減"]],
-        "short_sell": [["融券賣出"], ["融券", "賣出"]],
-        "short_buy": [["融券買進"], ["融券", "買進"]],
-        "short_balance": [["融券餘額"], ["融券", "餘額"]],
-        "short_change": [["融券增減"], ["融券", "增減"]],
-    })
-
-    date_col = cols.get("date")
-    if not date_col:
+    if "date" not in df.columns:
         raise DataUnavailableError("MoneyDJ 融資融券欄位解析失敗，缺少 date")
 
     result = pd.DataFrame()
@@ -555,16 +541,29 @@ def prepare_moneydj_margin(df: pd.DataFrame) -> pd.DataFrame:
             return None
         return _parse_roc_date(text)
 
-    result["date"] = df[date_col].map(_parse_moneydj_date)
+    result["date"] = df["date"].map(_parse_moneydj_date)
 
     # MoneyDJ values are already in lots (張), no conversion needed
-    for std_name in ["margin_buy", "margin_sell", "margin_balance", "margin_change",
+    for col_name in ["margin_buy", "margin_sell", "margin_balance", "margin_change",
                      "short_sell", "short_buy", "short_balance", "short_change"]:
-        src_col = cols.get(std_name)
-        if src_col:
-            result[std_name] = df[src_col].map(_clean_int)
+        if col_name in df.columns:
+            result[col_name] = df[col_name].map(_clean_int)
         else:
-            result[std_name] = None
+            result[col_name] = None
+
+    # 券資比 comes as percentage string like "1.25%", convert to float
+    if "short_margin_ratio" in df.columns:
+        def _parse_percent(val):
+            if pd.isna(val):
+                return None
+            text = str(val).strip().replace("%", "")
+            try:
+                return float(text)
+            except ValueError:
+                return None
+        result["short_margin_ratio"] = df["short_margin_ratio"].map(_parse_percent)
+    else:
+        result["short_margin_ratio"] = None
 
     # Drop rows with invalid dates
     result = result.dropna(subset=["date"])

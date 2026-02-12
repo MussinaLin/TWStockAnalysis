@@ -298,6 +298,7 @@ def _build_daily_rows(
     issued_shares: dict[str, int] | None = None,
     twse_margin: pd.DataFrame | None = None,
     tpex_margin: pd.DataFrame | None = None,
+    margin_cache: dict[str, dict[dt.date, dict]] | None = None,
 ) -> pd.DataFrame:
     """Build daily data rows for all holdings."""
     rows: list[dict] = []
@@ -329,8 +330,11 @@ def _build_daily_rows(
             symbol, twse_3insti, tpex_3insti
         )
 
-        # Get margin trading data
-        margin_data = _get_margin_data(symbol, twse_margin, tpex_margin)
+        # Get margin trading data (from cache if available, else from DataFrames)
+        if margin_cache is not None and symbol in margin_cache and date in margin_cache[symbol]:
+            margin_data = margin_cache[symbol][date]
+        else:
+            margin_data = _get_margin_data(symbol, twse_margin, tpex_margin)
 
         # Update history and compute indicators
         series = _update_history(history, symbol, date, close_price)
@@ -359,12 +363,15 @@ def _build_daily_rows(
             if shares and shares > 0:
                 turnover_rate = round(volume / shares * 100, 4)
 
-        # Calculate margin_short_ratio (資券比)
-        margin_short_ratio = None
+        # Get margin data values
         margin_balance = margin_data.get("margin_balance")
         short_balance = margin_data.get("short_balance")
-        if margin_balance is not None and short_balance is not None and short_balance > 0:
-            margin_short_ratio = round(margin_balance / short_balance, 2)
+
+        # 券資比 (short_margin_ratio) - use MoneyDJ value if available, else calculate
+        short_margin_ratio = margin_data.get("short_margin_ratio")
+        if short_margin_ratio is None and margin_balance is not None and margin_balance > 0:
+            if short_balance is not None:
+                short_margin_ratio = round(short_balance / margin_balance * 100, 2)
 
         rows.append({
             "symbol": symbol,
@@ -390,7 +397,7 @@ def _build_daily_rows(
             "short_buy": margin_data.get("short_buy"),
             "short_balance": short_balance,
             "short_change": margin_data.get("short_change"),
-            "margin_short_ratio": margin_short_ratio,
+            "short_margin_ratio": short_margin_ratio,
             "rsi_14": indicators["rsi"],
             "macd": indicators["macd"],
             "macd_signal": indicators["macd_signal"],
@@ -529,12 +536,13 @@ def _get_margin_data(
     symbol: str,
     twse_margin: pd.DataFrame | None,
     tpex_margin: pd.DataFrame | None,
-) -> dict[str, int | None]:
+) -> dict[str, int | float | None]:
     """Get margin trading data for a single stock.
 
     Returns dict with keys: margin_buy, margin_sell, margin_balance, margin_change,
-                            short_sell, short_buy, short_balance, short_change
-    Units: lots (張)
+                            short_sell, short_buy, short_balance, short_change,
+                            short_margin_ratio
+    Units: lots (張), short_margin_ratio is percentage (%)
     """
     result = {
         "margin_buy": None,
@@ -545,6 +553,7 @@ def _get_margin_data(
         "short_buy": None,
         "short_balance": None,
         "short_change": None,
+        "short_margin_ratio": None,
     }
 
     # Try TWSE margin first
@@ -554,7 +563,12 @@ def _get_margin_data(
             for key in result.keys():
                 if key in row.columns:
                     val = row.iloc[0][key]
-                    result[key] = int(val) if pd.notna(val) else None
+                    if pd.notna(val):
+                        # short_margin_ratio is a float (percentage), others are int
+                        if key == "short_margin_ratio":
+                            result[key] = float(val)
+                        else:
+                            result[key] = int(val)
             return result
 
     # Try TPEX margin
@@ -564,9 +578,73 @@ def _get_margin_data(
             for key in result.keys():
                 if key in row.columns:
                     val = row.iloc[0][key]
-                    result[key] = int(val) if pd.notna(val) else None
+                    if pd.notna(val):
+                        # short_margin_ratio is a float (percentage), others are int
+                        if key == "short_margin_ratio":
+                            result[key] = float(val)
+                        else:
+                            result[key] = int(val)
 
     return result
+
+
+def _prefetch_margin_cache(
+    session: requests.Session,
+    holdings: pd.DataFrame,
+    start_date: dt.date,
+    end_date: dt.date,
+) -> dict[str, dict[dt.date, dict]]:
+    """Pre-fetch margin data for all stocks in date range.
+
+    Args:
+        session: HTTP session
+        holdings: DataFrame with stock symbols
+        start_date: Start date of backfill range
+        end_date: End date of backfill range
+
+    Returns:
+        Dict mapping symbol -> date -> margin_data_dict
+        margin_data_dict contains: margin_buy, margin_sell, margin_balance,
+        margin_change, short_sell, short_buy, short_balance, short_change,
+        short_margin_ratio
+    """
+    cache: dict[str, dict[dt.date, dict]] = {}
+    total = len(holdings)
+
+    # Add buffer days before start_date to ensure we have data
+    fetch_start = start_date - dt.timedelta(days=10)
+
+    print(f"預取融資融券資料 {start_date} ~ {end_date}...")
+
+    for idx, item in holdings.iterrows():
+        symbol = str(item["symbol"]).strip()
+        print(f"  預取融資融券 {idx + 1}/{total} {symbol}")
+
+        cache[symbol] = {}
+        try:
+            raw = fetch_moneydj_margin(session, symbol, fetch_start, end_date)
+            df = prepare_moneydj_margin(raw)
+
+            for _, row in df.iterrows():
+                row_date = row["date"]
+                if not isinstance(row_date, dt.date):
+                    continue
+                cache[symbol][row_date] = {
+                    "margin_buy": row.get("margin_buy"),
+                    "margin_sell": row.get("margin_sell"),
+                    "margin_balance": row.get("margin_balance"),
+                    "margin_change": row.get("margin_change"),
+                    "short_sell": row.get("short_sell"),
+                    "short_buy": row.get("short_buy"),
+                    "short_balance": row.get("short_balance"),
+                    "short_change": row.get("short_change"),
+                    "short_margin_ratio": row.get("short_margin_ratio"),
+                }
+        except (DataUnavailableError, requests.RequestException) as exc:
+            print(f"    {symbol} 融資融券取得失敗：{exc}")
+
+    print(f"融資融券預取完成，共 {len(cache)} 檔股票")
+    return cache
 
 
 def _update_history(
@@ -658,6 +736,7 @@ def _run_for_date(
     today: dt.date,
     skip_existing: bool = False,
     issued_shares: dict[str, int] | None = None,
+    margin_cache: dict[str, dict[dt.date, dict]] | None = None,
 ) -> bool:
     """Process data for a single date."""
     sheet_name = date.isoformat()
@@ -749,21 +828,26 @@ def _run_for_date(
     twse_margin = None
     tpex_margin = None
 
-    if date == today:
+    if margin_cache is not None:
+        # Use pre-fetched cache (backfill mode with cache)
+        # margin_cache will be used directly in _build_daily_rows
+        pass
+    elif date == today:
         # Use OpenAPI for today's data (all stocks at once)
         try:
             twse_margin_raw, twse_margin_date = fetch_twse_margin(session)
-            if twse_margin_date == date:
+            # TWSE OpenAPI doesn't return date, assume today when None
+            if twse_margin_date is None or twse_margin_date == date:
                 twse_margin = prepare_twse_margin(twse_margin_raw)
-            elif twse_margin_date is not None:
+            else:
                 print(f"{sheet_name} TWSE 融資融券日期不匹配：{twse_margin_date} != {date}")
         except (DataUnavailableError, requests.RequestException) as exc:
             print(f"{sheet_name} TWSE 融資融券取得失敗：{exc}")
 
         try:
             tpex_margin_raw, tpex_margin_date = fetch_tpex_margin(session)
-            if tpex_margin_date == date or tpex_margin_date is None:
-                # TPEX OpenAPI may not return date, assume today
+            # TPEX may return date in ROC format or None, accept both
+            if tpex_margin_date is None or tpex_margin_date == date:
                 tpex_margin = prepare_tpex_margin(tpex_margin_raw)
             else:
                 print(f"{sheet_name} TPEX 融資融券日期不匹配：{tpex_margin_date} != {date}")
@@ -771,11 +855,14 @@ def _run_for_date(
             print(f"{sheet_name} TPEX 融資融券取得失敗：{exc}")
     else:
         # Use MoneyDJ for historical data (per-stock, build combined DataFrame)
+        # This path is only used when margin_cache is not provided (single date backfill)
         margin_rows = []
+        fetch_start = date - dt.timedelta(days=10)
+        fetch_end = date
         for _, item in holdings.iterrows():
             symbol = str(item["symbol"]).strip()
             try:
-                moneydj_raw = fetch_moneydj_margin(session, symbol, date, date)
+                moneydj_raw = fetch_moneydj_margin(session, symbol, fetch_start, fetch_end)
                 moneydj_df = prepare_moneydj_margin(moneydj_raw)
                 # Find row for target date
                 row = moneydj_df.loc[moneydj_df["date"] == date]
@@ -807,6 +894,7 @@ def _run_for_date(
         issued_shares=issued_shares,
         twse_margin=twse_margin,
         tpex_margin=tpex_margin,
+        margin_cache=margin_cache,
     )
 
     if output_df.empty:
@@ -940,12 +1028,17 @@ def main() -> None:
         start_date = target_date - dt.timedelta(days=backfill_days - 1)
         backfill_dates = _build_date_range(start_date, target_date)
         print(f"初始化回補 {len(backfill_dates)} 天（含 {target_date.isoformat()}）")
+
+        # Pre-fetch margin data for all stocks in date range
+        margin_cache = _prefetch_margin_cache(session, holdings, start_date, target_date)
+
         for date in backfill_dates:
             _run_for_date(
                 session, date, holdings, history, volume_history,
                 sheet_names, twse_month_cache, config, today,
                 skip_existing=True,
                 issued_shares=issued_shares,
+                margin_cache=margin_cache,
             )
         ran_backfill = True
 
@@ -961,12 +1054,17 @@ def main() -> None:
         end_date = _parse_date(args.backfill_end) if args.backfill_end else target_date
         backfill_dates = _build_date_range(start_date, end_date)
         print(f"回補 {len(backfill_dates)} 天：{backfill_dates[0]} ~ {backfill_dates[-1]}")
+
+        # Pre-fetch margin data for all stocks in date range
+        margin_cache = _prefetch_margin_cache(session, holdings, start_date, end_date)
+
         for date in backfill_dates:
             _run_for_date(
                 session, date, holdings, history, volume_history,
                 sheet_names, twse_month_cache, config, today,
                 skip_existing=True,
                 issued_shares=issued_shares,
+                margin_cache=margin_cache,
             )
         ran_backfill = True
 
