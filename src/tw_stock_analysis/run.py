@@ -23,20 +23,26 @@ from .excel_utils import (
 )
 from .indicators import compute_bollinger_bands, compute_macd, compute_rsi
 from .prepare import (
+    prepare_moneydj_margin,
     prepare_tpex_3insti,
     prepare_tpex_issued_shares,
+    prepare_tpex_margin,
     prepare_tpex_quotes,
     prepare_twse_3insti,
     prepare_twse_day_all,
     prepare_twse_issued_shares,
+    prepare_twse_margin,
     prepare_twse_mi_index,
 )
 from .sources import (
     DataUnavailableError,
+    fetch_moneydj_margin,
     fetch_tpex_3insti_v2,
     fetch_tpex_company_basic,
     fetch_tpex_daily_quotes_v2,
+    fetch_tpex_margin,
     fetch_twse_company_basic,
+    fetch_twse_margin,
     fetch_twse_mi_index,
     fetch_twse_stock_day,
     fetch_twse_stock_day_all,
@@ -290,6 +296,8 @@ def _build_daily_rows(
     twse_month_cache: dict[tuple[str, dt.date], pd.DataFrame],
     config: AppConfig,
     issued_shares: dict[str, int] | None = None,
+    twse_margin: pd.DataFrame | None = None,
+    tpex_margin: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Build daily data rows for all holdings."""
     rows: list[dict] = []
@@ -321,6 +329,9 @@ def _build_daily_rows(
             symbol, twse_3insti, tpex_3insti
         )
 
+        # Get margin trading data
+        margin_data = _get_margin_data(symbol, twse_margin, tpex_margin)
+
         # Update history and compute indicators
         series = _update_history(history, symbol, date, close_price)
         vol_series = _update_history(volume_history, symbol, date, volume)
@@ -348,6 +359,13 @@ def _build_daily_rows(
             if shares and shares > 0:
                 turnover_rate = round(volume / shares * 100, 4)
 
+        # Calculate margin_short_ratio (資券比)
+        margin_short_ratio = None
+        margin_balance = margin_data.get("margin_balance")
+        short_balance = margin_data.get("short_balance")
+        if margin_balance is not None and short_balance is not None and short_balance > 0:
+            margin_short_ratio = round(margin_balance / short_balance, 2)
+
         rows.append({
             "symbol": symbol,
             "name": name,
@@ -364,6 +382,15 @@ def _build_daily_rows(
             "trust_net": trust_net_lots,
             "dealer_net": dealer_net_lots,
             "institutional_investors_net": insti_total_lots,
+            "margin_buy": margin_data.get("margin_buy"),
+            "margin_sell": margin_data.get("margin_sell"),
+            "margin_balance": margin_balance,
+            "margin_change": margin_data.get("margin_change"),
+            "short_sell": margin_data.get("short_sell"),
+            "short_buy": margin_data.get("short_buy"),
+            "short_balance": short_balance,
+            "short_change": margin_data.get("short_change"),
+            "margin_short_ratio": margin_short_ratio,
             "rsi_14": indicators["rsi"],
             "macd": indicators["macd"],
             "macd_signal": indicators["macd_signal"],
@@ -496,6 +523,50 @@ def _get_institutional_data(
             dealer_net = row.iloc[0]["dealer_net"]
 
     return foreign_net, trust_net, dealer_net
+
+
+def _get_margin_data(
+    symbol: str,
+    twse_margin: pd.DataFrame | None,
+    tpex_margin: pd.DataFrame | None,
+) -> dict[str, int | None]:
+    """Get margin trading data for a single stock.
+
+    Returns dict with keys: margin_buy, margin_sell, margin_balance, margin_change,
+                            short_sell, short_buy, short_balance, short_change
+    Units: lots (張)
+    """
+    result = {
+        "margin_buy": None,
+        "margin_sell": None,
+        "margin_balance": None,
+        "margin_change": None,
+        "short_sell": None,
+        "short_buy": None,
+        "short_balance": None,
+        "short_change": None,
+    }
+
+    # Try TWSE margin first
+    if twse_margin is not None and not twse_margin.empty:
+        row = twse_margin.loc[twse_margin["symbol"] == symbol]
+        if not row.empty:
+            for key in result.keys():
+                if key in row.columns:
+                    val = row.iloc[0][key]
+                    result[key] = int(val) if pd.notna(val) else None
+            return result
+
+    # Try TPEX margin
+    if tpex_margin is not None and not tpex_margin.empty:
+        row = tpex_margin.loc[tpex_margin["symbol"] == symbol]
+        if not row.empty:
+            for key in result.keys():
+                if key in row.columns:
+                    val = row.iloc[0][key]
+                    result[key] = int(val) if pd.notna(val) else None
+
+    return result
 
 
 def _update_history(
@@ -674,6 +745,51 @@ def _run_for_date(
     if tpex_3insti is None:
         tpex_3insti = pd.DataFrame(columns=["symbol", "name", "foreign_net", "trust_net", "dealer_net"])
 
+    # Fetch margin trading data
+    twse_margin = None
+    tpex_margin = None
+
+    if date == today:
+        # Use OpenAPI for today's data (all stocks at once)
+        try:
+            twse_margin_raw, twse_margin_date = fetch_twse_margin(session)
+            if twse_margin_date == date:
+                twse_margin = prepare_twse_margin(twse_margin_raw)
+            elif twse_margin_date is not None:
+                print(f"{sheet_name} TWSE 融資融券日期不匹配：{twse_margin_date} != {date}")
+        except (DataUnavailableError, requests.RequestException) as exc:
+            print(f"{sheet_name} TWSE 融資融券取得失敗：{exc}")
+
+        try:
+            tpex_margin_raw, tpex_margin_date = fetch_tpex_margin(session)
+            if tpex_margin_date == date or tpex_margin_date is None:
+                # TPEX OpenAPI may not return date, assume today
+                tpex_margin = prepare_tpex_margin(tpex_margin_raw)
+            else:
+                print(f"{sheet_name} TPEX 融資融券日期不匹配：{tpex_margin_date} != {date}")
+        except (DataUnavailableError, requests.RequestException) as exc:
+            print(f"{sheet_name} TPEX 融資融券取得失敗：{exc}")
+    else:
+        # Use MoneyDJ for historical data (per-stock, build combined DataFrame)
+        margin_rows = []
+        for _, item in holdings.iterrows():
+            symbol = str(item["symbol"]).strip()
+            try:
+                moneydj_raw = fetch_moneydj_margin(session, symbol, date, date)
+                moneydj_df = prepare_moneydj_margin(moneydj_raw)
+                # Find row for target date
+                row = moneydj_df.loc[moneydj_df["date"] == date]
+                if not row.empty:
+                    row_data = row.iloc[0].to_dict()
+                    row_data["symbol"] = symbol
+                    margin_rows.append(row_data)
+            except (DataUnavailableError, requests.RequestException):
+                # Silently skip - margin data not critical
+                pass
+        if margin_rows:
+            # Combine into a single DataFrame that works like twse_margin
+            twse_margin = pd.DataFrame(margin_rows)
+
     # Build daily data
     output_df = _build_daily_rows(
         session=session,
@@ -689,6 +805,8 @@ def _run_for_date(
         twse_month_cache=twse_month_cache,
         config=config,
         issued_shares=issued_shares,
+        twse_margin=twse_margin,
+        tpex_margin=tpex_margin,
     )
 
     if output_df.empty:

@@ -6,7 +6,9 @@ import re
 
 import pandas as pd
 
-from .sources import _clean_int, _clean_number, DataUnavailableError
+import datetime as dt
+
+from .sources import _clean_int, _clean_number, _parse_roc_date, DataUnavailableError
 
 
 def _normalize_col(text: str) -> str:
@@ -359,3 +361,212 @@ def prepare_tpex_issued_shares(df: pd.DataFrame) -> pd.DataFrame:
     result["issued_shares"] = df[issued_col].map(_clean_int)
 
     return result.dropna(subset=["issued_shares"])
+
+
+def prepare_twse_margin(df: pd.DataFrame) -> pd.DataFrame:
+    """Prepare TWSE margin trading data into standard format.
+
+    Columns: symbol, margin_buy, margin_sell, margin_balance, margin_change,
+             short_sell, short_buy, short_balance, short_change
+    Units: Input is in shares (股), output is in lots (張, ÷1000)
+    """
+    cols = _find_columns(df, {
+        "symbol": [["股票代號"], ["代號"]],
+        "margin_buy": [["融資買進"]],
+        "margin_sell": [["融資賣出"]],
+        "margin_cash_repay": [["融資現金償還"]],
+        "margin_balance": [["融資今日餘額"], ["融資餘額"]],
+        "short_sell": [["融券賣出"]],
+        "short_buy": [["融券買進"]],
+        "short_stock_repay": [["融券現券償還"]],
+        "short_balance": [["融券今日餘額"], ["融券餘額"]],
+    })
+
+    symbol_col = cols.get("symbol")
+    if not symbol_col:
+        raise DataUnavailableError("TWSE 融資融券欄位解析失敗，缺少 symbol")
+
+    result = pd.DataFrame()
+    result["symbol"] = df[symbol_col].astype(str).str.strip()
+
+    # Helper to convert shares to lots (張)
+    def _shares_to_lots(col_name: str) -> pd.Series:
+        src_col = cols.get(col_name)
+        if src_col:
+            values = df[src_col].map(_clean_int)
+            return values.map(lambda x: x // 1000 if x is not None else None)
+        return pd.Series([None] * len(df))
+
+    result["margin_buy"] = _shares_to_lots("margin_buy")
+    result["margin_sell"] = _shares_to_lots("margin_sell")
+    result["margin_balance"] = _shares_to_lots("margin_balance")
+    result["short_sell"] = _shares_to_lots("short_sell")
+    result["short_buy"] = _shares_to_lots("short_buy")
+    result["short_balance"] = _shares_to_lots("short_balance")
+
+    # Calculate margin_change: buy - sell - cash_repay
+    margin_buy = df[cols["margin_buy"]].map(_clean_int) if cols.get("margin_buy") else None
+    margin_sell = df[cols["margin_sell"]].map(_clean_int) if cols.get("margin_sell") else None
+    margin_cash = df[cols["margin_cash_repay"]].map(_clean_int) if cols.get("margin_cash_repay") else None
+
+    if margin_buy is not None and margin_sell is not None:
+        margin_change = margin_buy - margin_sell
+        if margin_cash is not None:
+            margin_change = margin_change - margin_cash.fillna(0)
+        result["margin_change"] = margin_change.map(lambda x: int(x // 1000) if pd.notna(x) else None)
+    else:
+        result["margin_change"] = None
+
+    # Calculate short_change: sell - buy - stock_repay
+    short_sell_raw = df[cols["short_sell"]].map(_clean_int) if cols.get("short_sell") else None
+    short_buy_raw = df[cols["short_buy"]].map(_clean_int) if cols.get("short_buy") else None
+    short_stock = df[cols["short_stock_repay"]].map(_clean_int) if cols.get("short_stock_repay") else None
+
+    if short_sell_raw is not None and short_buy_raw is not None:
+        short_change = short_sell_raw - short_buy_raw
+        if short_stock is not None:
+            short_change = short_change - short_stock.fillna(0)
+        result["short_change"] = short_change.map(lambda x: int(x // 1000) if pd.notna(x) else None)
+    else:
+        result["short_change"] = None
+
+    return result
+
+
+def prepare_tpex_margin(df: pd.DataFrame) -> pd.DataFrame:
+    """Prepare TPEX margin trading data into standard format.
+
+    Columns: symbol, margin_buy, margin_sell, margin_balance, margin_change,
+             short_sell, short_buy, short_balance, short_change
+    Units: Input is in shares (股), output is in lots (張, ÷1000)
+    """
+    # TPEX uses English column names
+    col_mapping = {
+        "symbol": "SecuritiesCompanyCode",
+        "margin_buy": "MarginPurchase",
+        "margin_sell": "MarginSales",
+        "margin_cash_repay": "CashRedemption",
+        "margin_balance": "MarginPurchaseBalance",
+        "short_sell": "ShortSale",
+        "short_buy": "ShortCovering",
+        "short_stock_repay": "StockRedemption",
+        "short_balance": "ShortSaleBalance",
+    }
+
+    # Find actual column names (case insensitive)
+    df_cols_lower = {c.lower(): c for c in df.columns}
+    cols = {}
+    for std_name, tpex_name in col_mapping.items():
+        actual_col = df_cols_lower.get(tpex_name.lower())
+        cols[std_name] = actual_col
+
+    symbol_col = cols.get("symbol")
+    if not symbol_col:
+        raise DataUnavailableError("TPEX 融資融券欄位解析失敗，缺少 symbol")
+
+    result = pd.DataFrame()
+    result["symbol"] = df[symbol_col].astype(str).str.strip()
+
+    # Helper to convert shares to lots (張)
+    def _shares_to_lots(col_name: str) -> pd.Series:
+        src_col = cols.get(col_name)
+        if src_col and src_col in df.columns:
+            values = df[src_col].map(_clean_int)
+            return values.map(lambda x: x // 1000 if x is not None else None)
+        return pd.Series([None] * len(df))
+
+    result["margin_buy"] = _shares_to_lots("margin_buy")
+    result["margin_sell"] = _shares_to_lots("margin_sell")
+    result["margin_balance"] = _shares_to_lots("margin_balance")
+    result["short_sell"] = _shares_to_lots("short_sell")
+    result["short_buy"] = _shares_to_lots("short_buy")
+    result["short_balance"] = _shares_to_lots("short_balance")
+
+    # Calculate margin_change: buy - sell - cash_repay
+    margin_buy_col = cols.get("margin_buy")
+    margin_sell_col = cols.get("margin_sell")
+    margin_cash_col = cols.get("margin_cash_repay")
+
+    if margin_buy_col and margin_sell_col:
+        margin_buy = df[margin_buy_col].map(_clean_int)
+        margin_sell = df[margin_sell_col].map(_clean_int)
+        margin_change = margin_buy - margin_sell
+        if margin_cash_col and margin_cash_col in df.columns:
+            margin_cash = df[margin_cash_col].map(_clean_int)
+            margin_change = margin_change - margin_cash.fillna(0)
+        result["margin_change"] = margin_change.map(lambda x: int(x // 1000) if pd.notna(x) else None)
+    else:
+        result["margin_change"] = None
+
+    # Calculate short_change: sell - buy - stock_repay
+    short_sell_col = cols.get("short_sell")
+    short_buy_col = cols.get("short_buy")
+    short_stock_col = cols.get("short_stock_repay")
+
+    if short_sell_col and short_buy_col:
+        short_sell_raw = df[short_sell_col].map(_clean_int)
+        short_buy_raw = df[short_buy_col].map(_clean_int)
+        short_change = short_sell_raw - short_buy_raw
+        if short_stock_col and short_stock_col in df.columns:
+            short_stock = df[short_stock_col].map(_clean_int)
+            short_change = short_change - short_stock.fillna(0)
+        result["short_change"] = short_change.map(lambda x: int(x // 1000) if pd.notna(x) else None)
+    else:
+        result["short_change"] = None
+
+    return result
+
+
+def prepare_moneydj_margin(df: pd.DataFrame) -> pd.DataFrame:
+    """Prepare MoneyDJ margin trading data into standard format.
+
+    Input DataFrame from MoneyDJ HTML table with columns like:
+    日期(民國), 融資買進, 融資賣出, 融資餘額, 融資增減, 融券賣出, 融券買進, 融券餘額, 融券增減
+
+    Returns DataFrame with columns: date, margin_buy, margin_sell, margin_balance,
+                                    margin_change, short_sell, short_buy, short_balance,
+                                    short_change (units: lots/張)
+    """
+    # Find columns by keyword matching
+    cols = _find_columns(df, {
+        "date": [["日期"]],
+        "margin_buy": [["融資買進"], ["融資", "買進"]],
+        "margin_sell": [["融資賣出"], ["融資", "賣出"]],
+        "margin_balance": [["融資餘額"], ["融資", "餘額"]],
+        "margin_change": [["融資增減"], ["融資", "增減"]],
+        "short_sell": [["融券賣出"], ["融券", "賣出"]],
+        "short_buy": [["融券買進"], ["融券", "買進"]],
+        "short_balance": [["融券餘額"], ["融券", "餘額"]],
+        "short_change": [["融券增減"], ["融券", "增減"]],
+    })
+
+    date_col = cols.get("date")
+    if not date_col:
+        raise DataUnavailableError("MoneyDJ 融資融券欄位解析失敗，缺少 date")
+
+    result = pd.DataFrame()
+
+    # Parse ROC dates (民國, e.g., 115/02/11) to gregorian
+    def _parse_moneydj_date(val) -> dt.date | None:
+        if pd.isna(val):
+            return None
+        text = str(val).strip()
+        if not text:
+            return None
+        return _parse_roc_date(text)
+
+    result["date"] = df[date_col].map(_parse_moneydj_date)
+
+    # MoneyDJ values are already in lots (張), no conversion needed
+    for std_name in ["margin_buy", "margin_sell", "margin_balance", "margin_change",
+                     "short_sell", "short_buy", "short_balance", "short_change"]:
+        src_col = cols.get(std_name)
+        if src_col:
+            result[std_name] = df[src_col].map(_clean_int)
+        else:
+            result[std_name] = None
+
+    # Drop rows with invalid dates
+    result = result.dropna(subset=["date"])
+
+    return result

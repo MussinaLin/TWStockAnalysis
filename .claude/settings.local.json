@@ -16,7 +16,12 @@
       "WebFetch(domain:dts.twse.com.tw)",
       "WebFetch(domain:mopsfin.twse.com.tw)",
       "Bash(python -c:*)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(ls:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(ruff check:*)",
+      "Bash(python -m ruff check:*)",
+      "Bash(pip install:*)"
     ]
   }
 }

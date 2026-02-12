@@ -30,6 +30,9 @@ TPEX_3INSTI_V2_URL = (
 )
 TWSE_COMPANY_BASIC_URL = "https://dts.twse.com.tw/opendata/t187ap03_L.csv"
 TPEX_COMPANY_BASIC_URL = "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O"
+TWSE_MARGIN_URL = "https://openapi.twse.com.tw/v1/exchangeReport/MI_MARGN"
+TPEX_MARGIN_URL = "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_margin_balance"
+MONEYDJ_MARGIN_URL = "https://concords.moneydj.com/z/zc/zcn/zcn.djhtm"
 
 
 class DataUnavailableError(RuntimeError):
@@ -567,3 +570,114 @@ def fetch_tpex_company_basic(session: requests.Session) -> pd.DataFrame:
         raise DataUnavailableError("TPEX 公司基本資料無資料")
 
     return pd.DataFrame(payload)
+
+
+def fetch_twse_margin(session: requests.Session) -> tuple[pd.DataFrame, dt.date | None]:
+    """Fetch TWSE margin trading data for all listed stocks (today only).
+
+    Returns DataFrame and data date. The DataFrame has Chinese column names.
+    Key columns: 股票代號, 融資買進, 融資賣出, 融資現金償還, 融資今日餘額,
+                 融券賣出, 融券買進, 融券現券償還, 融券今日餘額
+    """
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    response = session.get(TWSE_MARGIN_URL, timeout=30, verify=False)
+    response.raise_for_status()
+    payload = response.json()
+
+    if not isinstance(payload, list):
+        raise DataUnavailableError("TWSE MI_MARGN 回傳格式異常")
+    if not payload:
+        raise DataUnavailableError("TWSE MI_MARGN 無資料")
+
+    # Extract date from first record
+    data_date = None
+    sample = payload[0]
+    if isinstance(sample, dict):
+        for key in ("Date", "date", "日期"):
+            if key in sample:
+                data_date = _parse_date_any(str(sample.get(key, "")))
+                if data_date:
+                    break
+
+    return pd.DataFrame(payload), data_date
+
+
+def fetch_tpex_margin(session: requests.Session) -> tuple[pd.DataFrame, dt.date | None]:
+    """Fetch TPEX margin trading data for all OTC stocks (today only).
+
+    Returns DataFrame and data date. The DataFrame has English column names.
+    Key columns: SecuritiesCompanyCode, MarginPurchase, MarginSales, CashRedemption,
+                 MarginPurchaseBalance, ShortSale, ShortCovering, StockRedemption,
+                 ShortSaleBalance
+    """
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    response = session.get(TPEX_MARGIN_URL, timeout=30, verify=False)
+    response.raise_for_status()
+    payload = response.json()
+
+    if not isinstance(payload, list):
+        raise DataUnavailableError("TPEX margin 回傳格式異常")
+    if not payload:
+        raise DataUnavailableError("TPEX margin 無資料")
+
+    # Extract date from first record
+    data_date = None
+    sample = payload[0]
+    if isinstance(sample, dict):
+        for key in ("Date", "date", "日期", "ReportDate"):
+            if key in sample:
+                data_date = _parse_date_any(str(sample.get(key, "")))
+                if data_date:
+                    break
+
+    return pd.DataFrame(payload), data_date
+
+
+def fetch_moneydj_margin(
+    session: requests.Session,
+    symbol: str,
+    start: dt.date,
+    end: dt.date,
+) -> pd.DataFrame:
+    """Fetch historical margin trading data from MoneyDJ for a single stock.
+
+    Args:
+        session: HTTP session
+        symbol: Stock symbol (e.g., "2330")
+        start: Start date
+        end: End date
+
+    Returns:
+        DataFrame with columns: date, margin_buy, margin_sell, margin_balance,
+                               margin_change, short_sell, short_buy, short_balance,
+                               short_change (units: lots/張)
+    """
+    # MoneyDJ uses YYYY-M-D format (no zero padding)
+    start_str = f"{start.year}-{start.month}-{start.day}"
+    end_str = f"{end.year}-{end.month}-{end.day}"
+
+    params = {"a": symbol, "c": start_str, "d": end_str}
+
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    response = session.get(MONEYDJ_MARGIN_URL, params=params, timeout=30, verify=False)
+    response.raise_for_status()
+
+    # Parse HTML tables
+    try:
+        tables = pd.read_html(io.StringIO(response.text), encoding="utf-8")
+    except ValueError as exc:
+        raise DataUnavailableError(f"MoneyDJ 融資融券頁面解析失敗：{exc}") from exc
+
+    # Find the margin data table by looking for expected columns
+    target_table = None
+    for table in tables:
+        cols = [str(c).strip() for c in table.columns]
+        # Look for table with 日期 and 融資 columns
+        if any("日期" in c for c in cols) and any("融資" in c for c in cols):
+            target_table = table
+            break
+
+    if target_table is None:
+        raise DataUnavailableError("MoneyDJ 找不到融資融券表格")
+
+    return target_table
