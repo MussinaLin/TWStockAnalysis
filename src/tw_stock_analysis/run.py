@@ -398,7 +398,8 @@ def _build_daily_rows(
             "short_balance": short_balance,
             "short_change": margin_data.get("short_change"),
             "short_margin_ratio": short_margin_ratio,
-            "rsi_14": indicators["rsi"],
+            "rsi_9": indicators["rsi_9"],
+            "rsi_14": indicators["rsi_14"],
             "macd": indicators["macd"],
             "macd_signal": indicators["macd_signal"],
             "macd_hist": indicators["macd_hist"],
@@ -671,7 +672,8 @@ def _compute_indicators(
 ) -> dict:
     """Compute all technical indicators."""
     result = {
-        "rsi": None,
+        "rsi_9": None,
+        "rsi_14": None,
         "macd": None,
         "macd_signal": None,
         "macd_hist": None,
@@ -693,10 +695,13 @@ def _compute_indicators(
     if len(vol_series) >= 20:
         result["vol_ma20"] = vol_series.tail(20).mean()
 
-    # RSI
+    # RSI (using Wilder's SMMA method)
+    if len(price_series) >= 9:
+        rsi_9 = compute_rsi(price_series, period=9)
+        result["rsi_9"] = rsi_9.iloc[-1] if not rsi_9.empty else None
     if len(price_series) >= 14:
-        rsi = compute_rsi(price_series)
-        result["rsi"] = rsi.iloc[-1] if not rsi.empty else None
+        rsi_14 = compute_rsi(price_series, period=14)
+        result["rsi_14"] = rsi_14.iloc[-1] if not rsi_14.empty else None
 
     # MACD
     if len(price_series) >= 2:

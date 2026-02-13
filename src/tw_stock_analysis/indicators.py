@@ -4,12 +4,18 @@ import pandas as pd
 
 
 def compute_rsi(close: pd.Series, period: int = 14) -> pd.Series:
-    """Compute RSI series."""
+    """Compute RSI series using Wilder's Smoothed Moving Average (SMMA).
+
+    Wilder's SMMA is equivalent to EMA with alpha = 1/period.
+    This is the standard method used by most trading platforms (TradingView, MT4, etc.).
+    """
     delta = close.diff()
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
-    avg_gain = gain.rolling(window=period, min_periods=period).mean()
-    avg_loss = loss.rolling(window=period, min_periods=period).mean()
+    # Wilder's SMMA: SMMA_t = (SMMA_{t-1} * (period-1) + value_t) / period
+    # Equivalent to EMA with alpha = 1/period
+    avg_gain = gain.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
     rs = avg_gain / avg_loss
     rsi = 100 - (100 / (1 + rs))
     return rsi
