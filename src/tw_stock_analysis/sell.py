@@ -269,6 +269,9 @@ def _analyze_symbol_sell(
     # Collect MACD hist history (need at least 2 days)
     macd_hist_history = _collect_values(sym, recent, date_sheets[:2], "macd_hist")
 
+    # Collect margin balance history (need at least 2 days)
+    margin_balance_history = _collect_values(sym, recent, date_sheets[:2], "margin_balance")
+
     # Calculate averages
     foreign_short_sum = sum(foreign_short) if foreign_short else None
     foreign_short_avg = (foreign_short_sum / len(foreign_short)) if foreign_short else None
@@ -395,6 +398,14 @@ def _analyze_symbol_sell(
             and today_hist < yesterday_hist
         )
 
+    # 13. Margin balance surge (融資餘額爆升)
+    cond_margin_surge = False
+    if len(margin_balance_history) >= 2:
+        today_margin = margin_balance_history[0]
+        yesterday_margin = margin_balance_history[1]
+        if yesterday_margin > 0:
+            cond_margin_surge = today_margin > yesterday_margin * (1 + config.sell_margin_surge_ratio)
+
     # Check if any condition is met (OR logic)
     any_condition_met = any([
         cond_foreign_sell,
@@ -409,6 +420,7 @@ def _analyze_symbol_sell(
         cond_macd_divergence,
         cond_bb_below,
         cond_macd_death_cross,
+        cond_margin_surge,
     ])
 
     if not any_condition_met:
@@ -440,6 +452,9 @@ def _analyze_symbol_sell(
         reasons.append(f"跌破布林中軌：%B={float(bb_percent_b):.2f}<{config.sell_bb_percent_b_max}")
     if cond_macd_death_cross:
         reasons.append(f"MACD高檔死叉：MACD={float(macd):.2f}>0，柱連兩日負且加速")
+    if cond_margin_surge:
+        surge_pct = (margin_balance_history[0] / margin_balance_history[1] - 1) * 100
+        reasons.append(f"融資餘額爆升：{margin_balance_history[1]:,.0f}→{margin_balance_history[0]:,.0f}(+{surge_pct:.1f}%)")
 
     # Count how many conditions are met
     conditions_met = sum([
@@ -455,6 +470,7 @@ def _analyze_symbol_sell(
         cond_macd_divergence,
         cond_bb_below,
         cond_macd_death_cross,
+        cond_margin_surge,
     ])
 
     return {
@@ -484,6 +500,7 @@ def _analyze_symbol_sell(
         "cond_macd_divergence": cond_macd_divergence,
         "cond_bb_below": cond_bb_below,
         "cond_macd_death_cross": cond_macd_death_cross,
+        "cond_margin_surge": cond_margin_surge,
         "conditions_met": conditions_met,
         "reasons": "；".join(reasons),
     }
