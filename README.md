@@ -7,8 +7,10 @@
 - 從 `.env` 讀取要追蹤的股票清單
 - 取得每日 OHLCV（開高低收量）資料
 - 取得三大法人（外資、投信、自營商）買賣超
-- 計算技術指標：RSI(14)、MACD、布林通道
+- 取得融資融券資料（餘額、增減、券資比）
+- 計算技術指標：RSI(9/14)、MACD、布林通道
 - Alpha 選股：根據多種條件篩選潛力股
+- 賣出警示：根據多種條件提示風險
 - 復盤模式：使用歷史資料進行回測分析
 
 ## 需求
@@ -135,7 +137,12 @@ tw-stock-analysis --no-sell
 | vol_ma5, vol_ma10, vol_ma20 | 均量（張） |
 | foreign_net, trust_net, dealer_net | 三大法人買賣超（張） |
 | institutional_investors_net | 三大法人合計（張） |
-| rsi_14 | RSI(14) |
+| margin_buy, margin_sell | 融資買進、賣出（張） |
+| margin_balance, margin_change | 融資餘額、增減（張） |
+| short_sell, short_buy | 融券賣出、回補（張） |
+| short_balance, short_change | 融券餘額、增減（張） |
+| short_margin_ratio | 券資比（%） |
+| rsi_9, rsi_14 | RSI(9)、RSI(14)（Wilder's SMMA） |
 | macd, macd_signal, macd_hist | MACD 指標 |
 | bb_upper, bb_middle, bb_lower | 布林通道上中下軌 |
 | bb_percent_b, bb_bandwidth | %B 及 bandwidth |
@@ -203,6 +210,7 @@ Alpha 選股分析結果。
 | cond_macd_divergence | MACD 背離：股價創高但 MACD 柱未創高 |
 | cond_bb_below | 跌破布林中軌：%B < 0.5 |
 | cond_macd_death_cross | MACD 高檔死叉：MACD/Signal > 0 且柱連兩日負且加速 |
+| cond_margin_surge | 融資餘額爆升：今日融資餘額 > 昨日 × (1 + N%) |
 
 ## 資料來源
 
@@ -210,6 +218,8 @@ Alpha 選股分析結果。
 - 上市三大法人：TWSE T86
 - 上櫃股票：TPEX 每日收盤行情
 - 上櫃三大法人：TPEX 三大法人買賣超
+- 融資融券（當日）：TWSE MI_MARGN、TPEX margin_balance
+- 融資融券（歷史回補）：MoneyDJ
 - 發行股數（週轉率計算）：TWSE/TPEX 公司基本資料
 
 ## 備註
