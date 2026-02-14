@@ -29,6 +29,7 @@ class AppConfig:
     sell_bb_percent_b_max: float
     sell_rsi_overbought: float
     sell_margin_surge_ratio: float
+    sell_other_cond_min: int
 
     @classmethod
     def from_env(cls) -> "AppConfig":
@@ -62,4 +63,5 @@ class AppConfig:
             sell_bb_percent_b_max=float(os.getenv("SELL_BB_PERCENT_B_MAX", "0.5")),
             sell_rsi_overbought=float(os.getenv("SELL_RSI_OVERBOUGHT", "80")),
             sell_margin_surge_ratio=float(os.getenv("SELL_MARGIN_SURGE_RATIO", "0.05")),
+            sell_other_cond_min=int(os.getenv("SELL_OTHER_COND_MIN", "2")),
         )

@@ -406,12 +406,17 @@ def _analyze_symbol_sell(
         if yesterday_margin > 0:
             cond_margin_surge = today_margin > yesterday_margin * (1 + config.sell_margin_surge_ratio)
 
-    # Check if any condition is met (OR logic)
-    any_condition_met = any([
+    # Required: at least one institutional sell condition
+    insti_conditions = [
         cond_foreign_sell,
         cond_foreign_accel,
         cond_trust_sell,
         cond_trust_accel,
+    ]
+    insti_met = any(insti_conditions)
+
+    # Optional: at least N technical/other conditions
+    other_conditions = [
         cond_high_black,
         cond_price_up_vol_down,
         cond_rsi_overbought,
@@ -421,9 +426,14 @@ def _analyze_symbol_sell(
         cond_bb_below,
         cond_macd_death_cross,
         cond_margin_surge,
-    ])
+    ]
+    other_count = sum(other_conditions)
+    other_met = other_count >= config.sell_other_cond_min
 
-    if not any_condition_met:
+    # Both must be satisfied
+    should_alert = insti_met and other_met
+
+    if not should_alert:
         return None
 
     # Build reasons
