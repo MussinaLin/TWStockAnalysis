@@ -244,6 +244,7 @@ def _analyze_symbol_sell(
     volume = r.get("volume")
     vol_ma10 = r.get("vol_ma10")
     bb_percent_b = r.get("bb_percent_b")
+    bb_bandwidth = r.get("bb_bandwidth")
 
     short_n = config.sell_insti_days_short
     long_n = config.sell_insti_days_long
@@ -405,6 +406,19 @@ def _analyze_symbol_sell(
         yesterday_margin = margin_balance_history[1]
         if yesterday_margin > 0:
             cond_margin_surge = today_margin > yesterday_margin * (1 + config.sell_margin_surge_ratio)
+
+    # If Bollinger bandwidth is narrow (consolidation), ignore certain technical conditions
+    if (
+        bb_bandwidth is not None
+        and pd.notna(bb_bandwidth)
+        and float(bb_bandwidth) < config.sell_bb_narrow_threshold
+    ):
+        cond_bb_below = False
+        cond_macd_death_cross = False
+        cond_macd_divergence = False
+        cond_macd_turn_neg = False
+        cond_rsi_divergence = False
+        cond_rsi_overbought = False
 
     # Required: at least one institutional sell condition
     insti_conditions = [
