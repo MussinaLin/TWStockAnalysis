@@ -68,6 +68,12 @@ tw-stock-analysis --backfill-days 90
 tw-stock-analysis --backfill-start 2025-08-01 --backfill-end 2025-10-15
 ```
 
+### 強制覆蓋已存在的資料
+
+```bash
+tw-stock-analysis --backfill-start 2025-08-01 --backfill-end 2025-10-15 --force
+```
+
 ### 初始化回補（僅當 Excel 不存在時）
 
 ```bash
@@ -133,7 +139,7 @@ tw-stock-analysis --no-sell
 | symbol, name | 股票代號、名稱 |
 | open, close, high, low | 開高低收 |
 | volume | 成交量（張） |
-| turnover_rate | 週轉率（%） |
+| turnover_rate | 週轉率（比率） |
 | vol_ma5, vol_ma10, vol_ma20 | 均量（張） |
 | foreign_net, trust_net, dealer_net | 三大法人買賣超（張） |
 | institutional_investors_net | 三大法人合計（張） |

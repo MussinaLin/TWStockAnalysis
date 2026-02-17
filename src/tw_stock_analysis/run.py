@@ -243,6 +243,11 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="不執行賣出警示分析（僅執行 alpha 分析）",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="強制覆蓋已存在的資料（搭配 backfill 使用）",
+    )
     return parser.parse_args()
 
 
@@ -359,12 +364,12 @@ def _build_daily_rows(
             else (foreign_net_lots or 0) + (trust_net_lots or 0) + (dealer_net_lots or 0)
         )
 
-        # Calculate turnover rate
+        # Calculate turnover rate (as ratio, not percentage)
         turnover_rate = None
         if issued_shares and volume is not None:
             shares = issued_shares.get(symbol)
             if shares and shares > 0:
-                turnover_rate = round(volume / shares * 100, 4)
+                turnover_rate = round(volume / shares, 6)
 
         # Get margin data values
         margin_balance = margin_data.get("margin_balance")
@@ -1044,7 +1049,7 @@ def main() -> None:
             _run_for_date(
                 session, date, holdings, history, volume_history,
                 sheet_names, twse_month_cache, config, today,
-                skip_existing=True,
+                skip_existing=not args.force,
                 issued_shares=issued_shares,
                 margin_cache=margin_cache,
             )
@@ -1061,7 +1066,8 @@ def main() -> None:
 
         end_date = _parse_date(args.backfill_end) if args.backfill_end else target_date
         backfill_dates = _build_date_range(start_date, end_date)
-        print(f"回補 {len(backfill_dates)} 天：{backfill_dates[0]} ~ {backfill_dates[-1]}")
+        force_msg = "（強制覆蓋）" if args.force else ""
+        print(f"回補 {len(backfill_dates)} 天：{backfill_dates[0]} ~ {backfill_dates[-1]}{force_msg}")
 
         # Pre-fetch margin data for all stocks in date range
         margin_cache = _prefetch_margin_cache(session, holdings, start_date, end_date)
@@ -1070,7 +1076,7 @@ def main() -> None:
             _run_for_date(
                 session, date, holdings, history, volume_history,
                 sheet_names, twse_month_cache, config, today,
-                skip_existing=True,
+                skip_existing=not args.force,
                 issued_shares=issued_shares,
                 margin_cache=margin_cache,
             )
