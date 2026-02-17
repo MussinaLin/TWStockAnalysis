@@ -9,18 +9,19 @@ from openpyxl import load_workbook
 
 def load_history(
     path: Path,
-) -> tuple[dict[str, pd.Series], dict[str, pd.Series]]:
-    """Load historical close prices and volumes from Excel sheets.
+) -> tuple[dict[str, pd.Series], dict[str, pd.Series], dict[str, pd.Series]]:
+    """Load historical close prices, volumes, and turnover rates from Excel sheets.
 
     Returns:
-        Tuple of (close_history, volume_history) where each is a dict
+        Tuple of (close_history, volume_history, turnover_history) where each is a dict
         mapping symbol to a pandas Series indexed by date.
     """
     if not path.exists():
-        return {}, {}
+        return {}, {}, {}
 
     close_hist: dict[str, list[tuple[dt.date, float]]] = {}
     volume_hist: dict[str, list[tuple[dt.date, float]]] = {}
+    turnover_hist: dict[str, list[tuple[dt.date, float]]] = {}
     xls = pd.ExcelFile(path)
     for sheet in xls.sheet_names:
         try:
@@ -38,6 +39,9 @@ def load_history(
             vol = row.get("volume")
             if pd.notna(vol):
                 volume_hist.setdefault(symbol, []).append((sheet_date, float(vol)))
+            turnover = row.get("turnover_rate")
+            if pd.notna(turnover):
+                turnover_hist.setdefault(symbol, []).append((sheet_date, float(turnover)))
 
     def _to_series(hist: dict[str, list[tuple[dt.date, float]]]) -> dict[str, pd.Series]:
         result: dict[str, pd.Series] = {}
@@ -48,7 +52,7 @@ def load_history(
             result[symbol] = pd.Series(values, index=pd.to_datetime(dates))
         return result
 
-    return _to_series(close_hist), _to_series(volume_hist)
+    return _to_series(close_hist), _to_series(volume_hist), _to_series(turnover_hist)
 
 
 def get_sheet_names(path: Path) -> set[str]:

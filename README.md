@@ -140,6 +140,7 @@ tw-stock-analysis --no-sell
 | open, close, high, low | 開高低收 |
 | volume | 成交量（張） |
 | turnover_rate | 週轉率（比率） |
+| turnover_ma20 | 平均20日週轉率（比率） |
 | vol_ma5, vol_ma10, vol_ma20 | 均量（張） |
 | foreign_net, trust_net, dealer_net | 三大法人買賣超（張） |
 | institutional_investors_net | 三大法人合計（張） |

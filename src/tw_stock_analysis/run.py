@@ -293,6 +293,7 @@ def _build_daily_rows(
     holdings: pd.DataFrame,
     history: dict[str, pd.Series],
     volume_history: dict[str, pd.Series],
+    turnover_history: dict[str, pd.Series],
     twse_3insti: pd.DataFrame,
     twse_day_all: pd.DataFrame | None,
     twse_mi_index: pd.DataFrame | None,
@@ -371,6 +372,12 @@ def _build_daily_rows(
             if shares and shares > 0:
                 turnover_rate = round(volume / shares, 6)
 
+        # Update turnover history and compute turnover_ma20
+        turnover_series = _update_history(turnover_history, symbol, date, turnover_rate)
+        turnover_ma20 = None
+        if len(turnover_series) >= 20:
+            turnover_ma20 = round(turnover_series.tail(20).mean(), 6)
+
         # Get margin data values
         margin_balance = margin_data.get("margin_balance")
         short_balance = margin_data.get("short_balance")
@@ -390,6 +397,7 @@ def _build_daily_rows(
             "low": low_price,
             "volume": volume_lots,
             "turnover_rate": turnover_rate,
+            "turnover_ma20": turnover_ma20,
             "vol_ma5": vol_ma5_lots,
             "vol_ma10": vol_ma10_lots,
             "vol_ma20": vol_ma20_lots,
@@ -743,6 +751,7 @@ def _run_for_date(
     holdings: pd.DataFrame,
     history: dict[str, pd.Series],
     volume_history: dict[str, pd.Series],
+    turnover_history: dict[str, pd.Series],
     sheet_names: set[str],
     twse_month_cache: dict[tuple[str, dt.date], pd.DataFrame],
     config: AppConfig,
@@ -897,6 +906,7 @@ def _run_for_date(
         holdings=holdings,
         history=history,
         volume_history=volume_history,
+        turnover_history=turnover_history,
         twse_3insti=twse_3insti,
         twse_day_all=twse_day_all,
         twse_mi_index=twse_mi_index,
@@ -1029,7 +1039,7 @@ def main() -> None:
     # Get issued shares for turnover rate calculation (from cache file or API)
     issued_shares = _get_issued_shares(session)
 
-    history, volume_history = load_history(OUTPUT_FILE)
+    history, volume_history, turnover_history = load_history(OUTPUT_FILE)
     sheet_names = get_sheet_names(OUTPUT_FILE)
     twse_month_cache: dict[tuple[str, dt.date], pd.DataFrame] = {}
 
@@ -1047,7 +1057,7 @@ def main() -> None:
 
         for date in backfill_dates:
             _run_for_date(
-                session, date, holdings, history, volume_history,
+                session, date, holdings, history, volume_history, turnover_history,
                 sheet_names, twse_month_cache, config, today,
                 skip_existing=not args.force,
                 issued_shares=issued_shares,
@@ -1074,7 +1084,7 @@ def main() -> None:
 
         for date in backfill_dates:
             _run_for_date(
-                session, date, holdings, history, volume_history,
+                session, date, holdings, history, volume_history, turnover_history,
                 sheet_names, twse_month_cache, config, today,
                 skip_existing=not args.force,
                 issued_shares=issued_shares,
@@ -1085,7 +1095,7 @@ def main() -> None:
     # Single date mode
     if not ran_backfill:
         _run_for_date(
-            session, target_date, holdings, history, volume_history,
+            session, target_date, holdings, history, volume_history, turnover_history,
             sheet_names, twse_month_cache, config, today,
             skip_existing=False,
             issued_shares=issued_shares,
