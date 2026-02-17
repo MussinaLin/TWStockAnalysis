@@ -974,7 +974,7 @@ def main() -> None:
             build_sell_sheets_batch(config, sell_dates, OUTPUT_FILE, SELL_FILE)
         else:
             # Single date mode
-            print(f"執行復盤賣出警示分析...")
+            print("執行復盤賣出警示分析...")
             build_sell_sheet(config, target_date, OUTPUT_FILE, SELL_FILE)
         return
 
@@ -984,13 +984,6 @@ def main() -> None:
             print(f"復盤模式錯誤：{OUTPUT_FILE} 不存在")
             return
 
-        # Load issued shares for consistency
-        session = requests.Session()
-        session.headers.update({"User-Agent": "tw-stock-daily/0.1"})
-        _get_issued_shares(session)
-
-        sheet_names = get_sheet_names(OUTPUT_FILE)
-
         # Determine replay date range
         if args.replay_start or args.replay_end:
             # Batch mode for date range - optimized
@@ -998,32 +991,45 @@ def main() -> None:
             replay_end = _parse_date(args.replay_end) if args.replay_end else target_date
             replay_dates = _build_date_range(replay_start, replay_end)
             print(f"復盤模式（批次）：分析 {replay_dates[0]} ~ {replay_dates[-1]} 共 {len(replay_dates)} 天")
+
+            # Load daily Excel once and share between alpha and sell
+            print(f"載入 {OUTPUT_FILE}...")
+            daily_xls = pd.ExcelFile(OUTPUT_FILE)
+            daily_date_sheets = [s for s in daily_xls.sheet_names if s != "market_closed"]
+            print("載入所有 sheets 到記憶體...")
+            preloaded_data: dict[str, pd.DataFrame] = {}
+            for s in daily_date_sheets:
+                preloaded_data[s] = daily_xls.parse(s)
+
             build_alpha_sheets_batch(
                 config, replay_dates, OUTPUT_FILE, ALPHA_FILE,
-                sheet_prefix="alpha"
+                sheet_prefix="alpha", preloaded_data=preloaded_data,
             )
             # Sell analysis (unless --no-sell)
             if not args.no_sell:
                 build_sell_sheets_batch(
                     config, replay_dates, OUTPUT_FILE, SELL_FILE,
-                    sheet_prefix="sell"
+                    sheet_prefix="sell", preloaded_data=preloaded_data,
                 )
         else:
-            # Single date mode
+            # Single date mode — load daily Excel once and share
             target_sheet = target_date.isoformat()
-            if target_sheet not in sheet_names:
+            daily_xls = pd.ExcelFile(OUTPUT_FILE)
+            if target_sheet not in daily_xls.sheet_names:
                 print(f"復盤模式錯誤：{OUTPUT_FILE} 中不存在 {target_sheet} sheet")
                 return
             print(f"復盤模式：分析 {target_date} 及之前的資料")
             build_alpha_sheet(
                 config, target_date, OUTPUT_FILE, ALPHA_FILE,
-                max_date=target_date, sheet_prefix="alpha"
+                max_date=target_date, sheet_prefix="alpha",
+                preloaded_xls=daily_xls,
             )
             # Sell analysis (unless --no-sell)
             if not args.no_sell:
                 build_sell_sheet(
                     config, target_date, OUTPUT_FILE, SELL_FILE,
-                    max_date=target_date, sheet_prefix="sell"
+                    max_date=target_date, sheet_prefix="sell",
+                    preloaded_xls=daily_xls,
                 )
         return
 

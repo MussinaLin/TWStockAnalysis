@@ -17,6 +17,7 @@ def build_sell_sheet(
     sell_file: Path,
     max_date: dt.date | None = None,
     sheet_prefix: str = "sell",
+    preloaded_xls: pd.ExcelFile | None = None,
 ) -> None:
     """Analyse recent trading data and write sell alerts to Excel.
 
@@ -27,12 +28,16 @@ def build_sell_sheet(
         sell_file: Path to output sell alerts Excel file
         max_date: If set, only consider sheets up to this date (for replay mode)
         sheet_prefix: Prefix for output sheet name (default: "sell")
+        preloaded_xls: Pre-loaded ExcelFile to avoid re-reading daily file
     """
-    if not daily_file.exists():
-        print("尚無每日資料，無法產生賣出分析。")
-        return
+    if preloaded_xls is not None:
+        xls = preloaded_xls
+    else:
+        if not daily_file.exists():
+            print("尚無每日資料，無法產生賣出分析。")
+            return
+        xls = pd.ExcelFile(daily_file)
 
-    xls = pd.ExcelFile(daily_file)
     date_sheets = sorted(
         [s for s in xls.sheet_names if s != "market_closed"],
         reverse=True
@@ -67,11 +72,20 @@ def build_sell_sheet(
         print("最新 sheet 缺少 symbol 欄位，無法分析。")
         return
 
-    symbols = latest_df["symbol"].astype(str).str.strip().tolist()
+    # Pre-build symbol indices for fast lookup
+    sym_indices: dict[str, dict[str, int]] = {}
+    for s, df in recent.items():
+        sym_indices[s] = _build_symbol_index(df)
+
+    symbols = list(sym_indices.get(latest_sheet, {}).keys())
+    latest_idx = sym_indices.get(latest_sheet, {})
 
     rows: list[dict] = []
     for sym in symbols:
-        row_data = _analyze_symbol_sell(sym, latest_df, recent, date_sheets, config)
+        row_data = _analyze_symbol_sell(
+            sym, latest_df, recent, date_sheets, config,
+            sym_indices=sym_indices, latest_row_idx=latest_idx.get(sym),
+        )
         if row_data:
             rows.append(row_data)
 
@@ -103,23 +117,35 @@ def build_sell_sheets_batch(
     daily_file: Path,
     sell_file: Path,
     sheet_prefix: str = "sell",
+    preloaded_data: dict[str, pd.DataFrame] | None = None,
 ) -> None:
     """Batch analyse multiple dates for sell alerts and write all results at once."""
-    if not daily_file.exists():
-        print("尚無每日資料，無法產生賣出分析。")
-        return
-
     if not dates:
         print("無日期可分析。")
         return
 
-    # Load Excel once
-    print(f"載入 {daily_file}...")
-    xls = pd.ExcelFile(daily_file)
-    all_date_sheets = sorted(
-        [s for s in xls.sheet_names if s != "market_closed"],
-        reverse=True
-    )
+    if preloaded_data is not None:
+        all_sheets_data = preloaded_data
+    else:
+        if not daily_file.exists():
+            print("尚無每日資料，無法產生賣出分析。")
+            return
+
+        # Load Excel once
+        print(f"載入 {daily_file}...")
+        xls = pd.ExcelFile(daily_file)
+        all_date_sheets_list = [s for s in xls.sheet_names if s != "market_closed"]
+        if not all_date_sheets_list:
+            print("尚無每日交易資料，無法產生賣出分析。")
+            return
+
+        # Pre-load all sheets into memory
+        print("載入所有 sheets 到記憶體...")
+        all_sheets_data = {}
+        for s in all_date_sheets_list:
+            all_sheets_data[s] = xls.parse(s)
+
+    all_date_sheets = sorted(all_sheets_data.keys(), reverse=True)
     if not all_date_sheets:
         print("尚無每日交易資料，無法產生賣出分析。")
         return
@@ -129,12 +155,6 @@ def build_sell_sheets_batch(
         config.sell_insti_days_long,
         config.sell_price_high_days + 1,
     )
-
-    # Pre-load all sheets into memory
-    print(f"載入所有 sheets 到記憶體...")
-    all_sheets_data: dict[str, pd.DataFrame] = {}
-    for s in all_date_sheets:
-        all_sheets_data[s] = xls.parse(s)
 
     # Process each date
     results: dict[str, pd.DataFrame] = {}
@@ -170,22 +190,22 @@ def build_sell_sheets_batch(
 
     # Write all results at once
     print(f"寫入 {len(results)} 個 sheets 到 {sell_file}...")
+    all_sheets: dict[str, pd.DataFrame]
     if sell_file.exists():
         existing_xls = pd.ExcelFile(sell_file)
-        existing_sheets = {s: existing_xls.parse(s) for s in existing_xls.sheet_names}
-        existing_sheets.update(results)
-        with pd.ExcelWriter(sell_file, engine="openpyxl", mode="w") as writer:
-            for sheet_name, df in existing_sheets.items():
-                df.to_excel(writer, sheet_name=sheet_name, index=False)
+        all_sheets = {s: existing_xls.parse(s) for s in existing_xls.sheet_names}
+        all_sheets.update(results)
     else:
-        with pd.ExcelWriter(sell_file, engine="openpyxl", mode="w") as writer:
-            for sheet_name, df in results.items():
-                df.to_excel(writer, sheet_name=sheet_name, index=False)
+        all_sheets = dict(results)
+
+    with pd.ExcelWriter(sell_file, engine="openpyxl", mode="w") as writer:
+        for sheet_name, df in all_sheets.items():
+            df.to_excel(writer, sheet_name=sheet_name, index=False)
 
     print(f"批次寫入完成，共 {len(results)} 個 sheets")
 
-    # Update summary sheet
-    build_sell_summary_sheet(sell_file)
+    # Update summary sheet using in-memory data (no re-read)
+    build_sell_summary_sheet(sell_file, sheets_data=all_sheets)
 
 
 def _analyze_date_sell(
@@ -202,11 +222,20 @@ def _analyze_date_sell(
     if latest_df is None or "symbol" not in latest_df.columns:
         return None
 
-    symbols = latest_df["symbol"].astype(str).str.strip().tolist()
+    # Pre-build symbol indices for all sheets (one-time string conversion)
+    sym_indices: dict[str, dict[str, int]] = {}
+    for s, df in recent.items():
+        sym_indices[s] = _build_symbol_index(df)
+
+    symbols = list(sym_indices.get(latest_sheet, {}).keys())
+    latest_idx = sym_indices.get(latest_sheet, {})
 
     rows: list[dict] = []
     for sym in symbols:
-        row_data = _analyze_symbol_sell(sym, latest_df, recent, date_sheets, config)
+        row_data = _analyze_symbol_sell(
+            sym, latest_df, recent, date_sheets, config,
+            sym_indices=sym_indices, latest_row_idx=latest_idx.get(sym),
+        )
         if row_data:
             rows.append(row_data)
 
@@ -222,19 +251,24 @@ def _analyze_symbol_sell(
     recent: dict[str, pd.DataFrame],
     date_sheets: list[str],
     config: AppConfig,
+    sym_indices: dict[str, dict[str, int]] | None = None,
+    latest_row_idx: int | None = None,
 ) -> dict | None:
     """Analyze a single symbol for sell conditions.
 
     Returns:
         Dict with analysis data if any condition met, None otherwise.
     """
-    row_latest = latest_df[latest_df["symbol"].astype(str).str.strip() == sym]
-    if row_latest.empty:
-        return None
-
-    r = row_latest.iloc[0]
+    if latest_row_idx is not None:
+        if latest_row_idx >= len(latest_df):
+            return None
+        r = latest_df.iloc[latest_row_idx]
+    else:
+        row_latest = latest_df[latest_df["symbol"].astype(str).str.strip() == sym]
+        if row_latest.empty:
+            return None
+        r = row_latest.iloc[0]
     name = str(r.get("name", "")).strip()
-    open_price = r.get("open")
     close = r.get("close")
     high = r.get("high")
     rsi = r.get("rsi_14")
@@ -256,24 +290,26 @@ def _analyze_symbol_sell(
     price_sheets = date_sheets[:price_high_days]
 
     # Collect foreign net
-    foreign_short = _collect_values(sym, recent, short_sheets, "foreign_net")
-    foreign_long = _collect_values(sym, recent, long_sheets, "foreign_net")
+    foreign_short = _collect_values(sym, recent, short_sheets, "foreign_net", sym_indices)
+    foreign_long = _collect_values(sym, recent, long_sheets, "foreign_net", sym_indices)
 
     # Collect trust net
-    trust_short = _collect_values(sym, recent, short_sheets, "trust_net")
-    trust_long = _collect_values(sym, recent, long_sheets, "trust_net")
+    trust_short = _collect_values(sym, recent, short_sheets, "trust_net", sym_indices)
+    trust_long = _collect_values(sym, recent, long_sheets, "trust_net", sym_indices)
 
     # Collect close prices for high detection
-    close_history = _collect_values(sym, recent, price_sheets, "close")
+    close_history = _collect_values(sym, recent, price_sheets, "close", sym_indices)
 
     # Collect RSI history
-    rsi_history = _collect_values(sym, recent, price_sheets, "rsi_14")
+    rsi_history = _collect_values(sym, recent, price_sheets, "rsi_14", sym_indices)
 
     # Collect MACD hist history (need at least 2 days)
-    macd_hist_history = _collect_values(sym, recent, date_sheets[:2], "macd_hist")
+    macd_hist_history = _collect_values(sym, recent, date_sheets[:2], "macd_hist", sym_indices)
 
     # Collect margin balance history (need at least 2 days)
-    margin_balance_history = _collect_values(sym, recent, date_sheets[:2], "margin_balance")
+    margin_balance_history = _collect_values(
+        sym, recent, date_sheets[:2], "margin_balance", sym_indices
+    )
 
     # Calculate averages
     foreign_short_sum = sum(foreign_short) if foreign_short else None
@@ -366,7 +402,7 @@ def _analyze_symbol_sell(
 
     # 10. MACD divergence: price high but macd_hist not high
     cond_macd_divergence = False
-    macd_hist_long = _collect_values(sym, recent, price_sheets, "macd_hist")
+    macd_hist_long = _collect_values(sym, recent, price_sheets, "macd_hist", sym_indices)
     if (
         close is not None and macd_hist is not None
         and pd.notna(close) and pd.notna(macd_hist)
@@ -547,11 +583,20 @@ def _analyze_symbol_sell(
     }
 
 
+def _build_symbol_index(df: pd.DataFrame) -> dict[str, int]:
+    """Build a symbol -> row index mapping for fast lookup."""
+    if "symbol" not in df.columns:
+        return {}
+    symbols = df["symbol"].astype(str).str.strip()
+    return {sym: idx for idx, sym in symbols.items()}
+
+
 def _collect_values(
     sym: str,
     recent: dict[str, pd.DataFrame],
     sheets: list[str],
     column: str,
+    sym_indices: dict[str, dict[str, int]] | None = None,
 ) -> list[float]:
     """Collect values for a symbol across multiple sheets."""
     values: list[float] = []
@@ -559,38 +604,54 @@ def _collect_values(
         df = recent.get(s)
         if df is None:
             continue
-        row = df[df["symbol"].astype(str).str.strip() == sym]
-        if row.empty:
-            continue
-        val = row.iloc[0].get(column)
+        if sym_indices is not None and s in sym_indices:
+            idx = sym_indices[s].get(sym)
+            if idx is None:
+                continue
+            val = df.iloc[idx].get(column) if idx < len(df) else None
+        else:
+            row = df[df["symbol"].astype(str).str.strip() == sym]
+            if row.empty:
+                continue
+            val = row.iloc[0].get(column)
         if pd.notna(val):
             values.append(float(val))
     return values
 
 
-def build_sell_summary_sheet(sell_file: Path) -> None:
+def build_sell_summary_sheet(
+    sell_file: Path,
+    sheets_data: dict[str, pd.DataFrame] | None = None,
+) -> None:
     """Build a summary sheet showing stock appearance frequency across all sell sheets."""
-    if not sell_file.exists():
-        return
+    if sheets_data is not None:
+        all_sheet_names = list(sheets_data.keys())
+    else:
+        if not sell_file.exists():
+            return
+        xls = pd.ExcelFile(sell_file)
+        all_sheet_names = xls.sheet_names
 
-    xls = pd.ExcelFile(sell_file)
     # Get all sell sheets, exclude summary
-    data_sheets = [
-        s for s in xls.sheet_names
+    data_sheet_names = [
+        s for s in all_sheet_names
         if s not in ("summary", "market_closed")
         and s.startswith("sell_")
     ]
 
-    if not data_sheets:
+    if not data_sheet_names:
         return
 
     # Collect stock appearances: {symbol: {name, dates}}
     stock_data: dict[str, dict] = {}
 
-    for sheet_name in data_sheets:
+    for sheet_name in data_sheet_names:
         date_part = sheet_name.split("_", 1)[1] if "_" in sheet_name else sheet_name
 
-        df = xls.parse(sheet_name)
+        if sheets_data is not None:
+            df = sheets_data[sheet_name]
+        else:
+            df = xls.parse(sheet_name)
         if "symbol" not in df.columns:
             continue
 
@@ -635,7 +696,10 @@ def build_sell_summary_sheet(sell_file: Path) -> None:
     summary_df = summary_df[[c for c in col_order if c in summary_df.columns]]
 
     # Write summary sheet
-    existing_sheets = {s: xls.parse(s) for s in xls.sheet_names if s != "summary"}
+    if sheets_data is not None:
+        existing_sheets = {s: sheets_data[s] for s in all_sheet_names if s != "summary"}
+    else:
+        existing_sheets = {s: xls.parse(s) for s in all_sheet_names if s != "summary"}
     existing_sheets["summary"] = summary_df
 
     with pd.ExcelWriter(sell_file, engine="openpyxl", mode="w") as writer:
