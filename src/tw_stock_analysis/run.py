@@ -336,17 +336,20 @@ def _build_daily_rows(
         else:
             margin_data = _get_margin_data(symbol, twse_margin, tpex_margin)
 
+        # Convert volume to lots (張) first, then update history
+        # This ensures consistency since historical data in Excel is already in lots
+        volume_lots = volume // 1000 if volume is not None else None
+
         # Update history and compute indicators
         series = _update_history(history, symbol, date, close_price)
-        vol_series = _update_history(volume_history, symbol, date, volume)
+        vol_series = _update_history(volume_history, symbol, date, volume_lots)
 
         indicators = _compute_indicators(series, vol_series, config)
 
-        # Convert to lots (張)
-        volume_lots = volume // 1000 if volume is not None else None
-        vol_ma5_lots = int(indicators["vol_ma5"] // 1000) if indicators["vol_ma5"] else None
-        vol_ma10_lots = int(indicators["vol_ma10"] // 1000) if indicators["vol_ma10"] else None
-        vol_ma20_lots = int(indicators["vol_ma20"] // 1000) if indicators["vol_ma20"] else None
+        # vol_ma is already in lots since vol_series is in lots
+        vol_ma5_lots = int(indicators["vol_ma5"]) if indicators["vol_ma5"] else None
+        vol_ma10_lots = int(indicators["vol_ma10"]) if indicators["vol_ma10"] else None
+        vol_ma20_lots = int(indicators["vol_ma20"]) if indicators["vol_ma20"] else None
         foreign_net_lots = foreign_net // 1000 if foreign_net is not None else None
         trust_net_lots = trust_net // 1000 if trust_net is not None else None
         dealer_net_lots = dealer_net // 1000 if dealer_net is not None else None
