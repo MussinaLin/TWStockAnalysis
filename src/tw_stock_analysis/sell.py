@@ -245,6 +245,8 @@ def _analyze_symbol_sell(
     vol_ma10 = r.get("vol_ma10")
     bb_percent_b = r.get("bb_percent_b")
     bb_bandwidth = r.get("bb_bandwidth")
+    turnover_rate = r.get("turnover_rate")
+    turnover_ma20 = r.get("turnover_ma20")
 
     short_n = config.sell_insti_days_short
     long_n = config.sell_insti_days_long
@@ -407,6 +409,15 @@ def _analyze_symbol_sell(
         if yesterday_margin > 0:
             cond_margin_surge = today_margin > yesterday_margin * (1 + config.sell_margin_surge_ratio)
 
+    # 14. Turnover rate surge (週轉率爆升)
+    cond_turnover_surge = False
+    if (
+        turnover_rate is not None and turnover_ma20 is not None
+        and pd.notna(turnover_rate) and pd.notna(turnover_ma20)
+        and turnover_ma20 > 0
+    ):
+        cond_turnover_surge = float(turnover_rate) > float(turnover_ma20) * config.turnover_surge_ratio
+
     # If Bollinger bandwidth is narrow (consolidation), ignore certain technical conditions
     if (
         bb_bandwidth is not None
@@ -440,6 +451,7 @@ def _analyze_symbol_sell(
         cond_bb_below,
         cond_macd_death_cross,
         cond_margin_surge,
+        cond_turnover_surge,
     ]
     other_count = sum(other_conditions)
     other_met = other_count >= config.sell_other_cond_min
@@ -479,6 +491,9 @@ def _analyze_symbol_sell(
     if cond_margin_surge:
         surge_pct = (margin_balance_history[0] / margin_balance_history[1] - 1) * 100
         reasons.append(f"融資餘額爆升：{margin_balance_history[1]:,.0f}→{margin_balance_history[0]:,.0f}(+{surge_pct:.1f}%)")
+    if cond_turnover_surge:
+        turnover_ratio = float(turnover_rate) / float(turnover_ma20)
+        reasons.append(f"週轉率爆升：{float(turnover_rate)*100:.2f}%>{float(turnover_ma20)*100:.2f}%×{config.turnover_surge_ratio}({turnover_ratio:.1f}倍)")
 
     # Count how many conditions are met
     conditions_met = sum([
@@ -495,6 +510,7 @@ def _analyze_symbol_sell(
         cond_bb_below,
         cond_macd_death_cross,
         cond_margin_surge,
+        cond_turnover_surge,
     ])
 
     return {
@@ -525,6 +541,7 @@ def _analyze_symbol_sell(
         "cond_bb_below": cond_bb_below,
         "cond_macd_death_cross": cond_macd_death_cross,
         "cond_margin_surge": cond_margin_surge,
+        "cond_turnover_surge": cond_turnover_surge,
         "conditions_met": conditions_met,
         "reasons": "；".join(reasons),
     }

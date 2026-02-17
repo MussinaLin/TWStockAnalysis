@@ -275,6 +275,8 @@ def _analyze_symbol(
     bb_upper = r.get("bb_upper")
     bb_bandwidth = r.get("bb_bandwidth")
     bb_percent_b = r.get("bb_percent_b")
+    turnover_rate = r.get("turnover_rate")
+    turnover_ma20 = r.get("turnover_ma20")
 
     # Collect institutional net across recent sheets
     insti_short = _collect_values(sym, recent, short_sheets, "institutional_investors_net")
@@ -347,11 +349,20 @@ def _analyze_symbol(
         and float(bb_percent_b) > config.bb_percent_b_min
     )
 
+    cond_turnover_surge = (
+        turnover_rate is not None
+        and turnover_ma20 is not None
+        and not pd.isna(turnover_rate)
+        and not pd.isna(turnover_ma20)
+        and turnover_ma20 > 0
+        and float(turnover_rate) > float(turnover_ma20) * config.turnover_surge_ratio
+    )
+
     # Selection logic:
     # 1. Required: cond_insti AND (cond_vol_ma10 OR cond_vol_ma20)
-    # 2. Optional: at least 2 of [cond_rsi, cond_macd, cond_bb_narrow, cond_bb_near_upper]
+    # 2. Optional: at least 2 of [cond_rsi, cond_macd, cond_bb_narrow, cond_bb_near_upper, cond_turnover_surge]
     required_met = cond_insti and (cond_vol_ma10 or cond_vol_ma20)
-    optional_count = sum([cond_rsi, cond_macd, cond_bb_narrow, cond_bb_near_upper])
+    optional_count = sum([cond_rsi, cond_macd, cond_bb_narrow, cond_bb_near_upper, cond_turnover_surge])
     optional_met = optional_count >= 2
 
     if not (required_met and optional_met):
@@ -385,6 +396,11 @@ def _analyze_symbol(
         reasons.append(
             f"接近布林上軌：%B={float(bb_percent_b):.2f} > {config.bb_percent_b_min}"
         )
+    if cond_turnover_surge:
+        turnover_ratio = float(turnover_rate) / float(turnover_ma20)
+        reasons.append(
+            f"週轉率爆升：{float(turnover_rate)*100:.2f}%>{float(turnover_ma20)*100:.2f}%×{config.turnover_surge_ratio}({turnover_ratio:.1f}倍)"
+        )
 
     return {
         "symbol": sym,
@@ -413,6 +429,7 @@ def _analyze_symbol(
         "cond_vol_ma20": cond_vol_ma20,
         "cond_bb_narrow": cond_bb_narrow,
         "cond_bb_near_upper": cond_bb_near_upper,
+        "cond_turnover_surge": cond_turnover_surge,
         "reasons": "；".join(reasons),
     }
 

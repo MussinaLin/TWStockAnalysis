@@ -196,6 +196,7 @@ Alpha 選股分析結果。
 | cond_macd | MACD 多方：histogram > 0 |
 | cond_bb_narrow | 布林收窄：近期 BW < 長期 BW |
 | cond_bb_near_upper | 接近上軌：%B > 設定值 |
+| cond_turnover_surge | 週轉率爆升：turnover_rate > turnover_ma20 × N |
 
 詳細參數設定請參考 `.env.example`。
 
@@ -225,6 +226,7 @@ Alpha 選股分析結果。
 | cond_bb_below | 跌破布林中軌：%B < 0.5 |
 | cond_macd_death_cross | MACD 高檔死叉：MACD/Signal > 0 且柱連兩日負且加速 |
 | cond_margin_surge | 融資餘額爆升：今日融資餘額 > 昨日 × (1 + N%) |
+| cond_turnover_surge | 週轉率爆升：turnover_rate > turnover_ma20 × N |
 
 ## 資料來源
 
