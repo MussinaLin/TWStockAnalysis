@@ -328,11 +328,11 @@ def _analyze_symbol_sell(
         and foreign_short_sum < 0
     )
 
-    # 2. Foreign selling acceleration (short avg < 0 AND short avg < long avg)
+    # 2. Foreign selling acceleration (short avg < -1 AND short avg < long avg)
     cond_foreign_accel = (
         foreign_short_avg is not None
         and foreign_long_avg is not None
-        and foreign_short_avg < 0
+        and foreign_short_avg < -1
         and foreign_short_avg < foreign_long_avg
     )
 
@@ -342,11 +342,11 @@ def _analyze_symbol_sell(
         and trust_short_sum < 0
     )
 
-    # 4. Trust selling acceleration (short avg < 0 AND short avg < long avg)
+    # 4. Trust selling acceleration (short avg < -1 AND short avg < long avg)
     cond_trust_accel = (
         trust_short_avg is not None
         and trust_long_avg is not None
-        and trust_short_avg < 0
+        and trust_short_avg < -1
         and trust_short_avg < trust_long_avg
     )
 
@@ -467,14 +467,14 @@ def _analyze_symbol_sell(
         cond_rsi_divergence = False
         cond_rsi_overbought = False
 
-    # Required: at least one institutional sell condition
+    # Required: at least 2 institutional sell conditions
     insti_conditions = [
         cond_foreign_sell,
         cond_foreign_accel,
         cond_trust_sell,
         cond_trust_accel,
     ]
-    insti_met = any(insti_conditions)
+    insti_met = sum(insti_conditions) >= 2
 
     # Optional: at least N technical/other conditions
     other_conditions = [
