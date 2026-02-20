@@ -12,7 +12,7 @@ import requests
 from dotenv import load_dotenv
 
 from .alpha import build_alpha_sheet, build_alpha_sheets_batch, build_summary_sheet
-from .sell import build_sell_sheet, build_sell_sheets_batch
+from .sell import build_sell_sheet, build_sell_sheets_batch, load_alpha_symbols
 from .config import AppConfig
 from .excel_utils import (
     get_sheet_names,
@@ -965,17 +965,27 @@ def main() -> None:
             print(f"錯誤：{OUTPUT_FILE} 不存在")
             return
 
+        # Load alpha pick symbols for exclusion
+        alpha_syms = load_alpha_symbols(ALPHA_FILE)
+
         if args.replay_sell_analysis_start or args.replay_sell_analysis_end:
             # Batch mode for date range
             sell_start = _parse_date(args.replay_sell_analysis_start) if args.replay_sell_analysis_start else target_date
             sell_end = _parse_date(args.replay_sell_analysis_end) if args.replay_sell_analysis_end else target_date
             sell_dates = _build_date_range(sell_start, sell_end)
             print(f"復盤賣出分析（批次）：分析 {sell_dates[0]} ~ {sell_dates[-1]} 共 {len(sell_dates)} 天")
-            build_sell_sheets_batch(config, sell_dates, OUTPUT_FILE, SELL_FILE)
+            build_sell_sheets_batch(
+                config, sell_dates, OUTPUT_FILE, SELL_FILE,
+                exclude_symbols=alpha_syms,
+            )
         else:
             # Single date mode
+            date_str = target_date.isoformat()
             print("執行復盤賣出警示分析...")
-            build_sell_sheet(config, target_date, OUTPUT_FILE, SELL_FILE)
+            build_sell_sheet(
+                config, target_date, OUTPUT_FILE, SELL_FILE,
+                exclude_symbols=alpha_syms.get(date_str),
+            )
         return
 
     # Replay mode: only run alpha analysis on existing data
@@ -1001,7 +1011,7 @@ def main() -> None:
             for s in daily_date_sheets:
                 preloaded_data[s] = daily_xls.parse(s)
 
-            build_alpha_sheets_batch(
+            alpha_syms = build_alpha_sheets_batch(
                 config, replay_dates, OUTPUT_FILE, ALPHA_FILE,
                 sheet_prefix="alpha", preloaded_data=preloaded_data,
             )
@@ -1010,6 +1020,7 @@ def main() -> None:
                 build_sell_sheets_batch(
                     config, replay_dates, OUTPUT_FILE, SELL_FILE,
                     sheet_prefix="sell", preloaded_data=preloaded_data,
+                    exclude_symbols=alpha_syms,
                 )
         else:
             # Single date mode — load daily Excel once and share
@@ -1019,7 +1030,7 @@ def main() -> None:
                 print(f"復盤模式錯誤：{OUTPUT_FILE} 中不存在 {target_sheet} sheet")
                 return
             print(f"復盤模式：分析 {target_date} 及之前的資料")
-            build_alpha_sheet(
+            alpha_picked = build_alpha_sheet(
                 config, target_date, OUTPUT_FILE, ALPHA_FILE,
                 max_date=target_date, sheet_prefix="alpha",
                 preloaded_xls=daily_xls,
@@ -1030,6 +1041,7 @@ def main() -> None:
                     config, target_date, OUTPUT_FILE, SELL_FILE,
                     max_date=target_date, sheet_prefix="sell",
                     preloaded_xls=daily_xls,
+                    exclude_symbols=alpha_picked,
                 )
         return
 
@@ -1108,11 +1120,14 @@ def main() -> None:
         )
 
     # Generate alpha analysis
-    build_alpha_sheet(config, target_date, OUTPUT_FILE, ALPHA_FILE)
+    alpha_picked = build_alpha_sheet(config, target_date, OUTPUT_FILE, ALPHA_FILE)
 
     # Generate sell analysis (unless --no-sell)
     if not args.no_sell:
-        build_sell_sheet(config, target_date, OUTPUT_FILE, SELL_FILE)
+        build_sell_sheet(
+            config, target_date, OUTPUT_FILE, SELL_FILE,
+            exclude_symbols=alpha_picked,
+        )
 
 
 if __name__ == "__main__":

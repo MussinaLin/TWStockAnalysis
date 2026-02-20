@@ -17,7 +17,7 @@ def build_alpha_sheets_batch(
     alpha_file: Path,
     sheet_prefix: str = "replay",
     preloaded_data: dict[str, pd.DataFrame] | None = None,
-) -> None:
+) -> dict[str, set[str]]:
     """Batch analyse multiple dates and write all results at once.
 
     This is optimized for replay mode - loads Excel once and writes all at once.
@@ -29,17 +29,20 @@ def build_alpha_sheets_batch(
         alpha_file: Path to output alpha picks Excel file
         sheet_prefix: Prefix for output sheet names
         preloaded_data: Pre-loaded daily sheets data to avoid re-reading Excel
+
+    Returns:
+        Dict mapping date string to set of picked symbols (for sell exclusion).
     """
     if not dates:
         print("無日期可分析。")
-        return
+        return {}
 
     if preloaded_data is not None:
         all_sheets_data = preloaded_data
     else:
         if not daily_file.exists():
             print("尚無每日資料，無法產生 alpha 分析。")
-            return
+            return {}
 
         # Load Excel once
         print(f"載入 {daily_file}...")
@@ -47,7 +50,7 @@ def build_alpha_sheets_batch(
         all_date_sheets_list = [s for s in xls.sheet_names if s != "market_closed"]
         if not all_date_sheets_list:
             print("尚無每日交易資料，無法產生 alpha 分析。")
-            return
+            return {}
 
         # Pre-load all sheets into memory
         print("載入所有 sheets 到記憶體...")
@@ -58,7 +61,7 @@ def build_alpha_sheets_batch(
     all_date_sheets = sorted(all_sheets_data.keys(), reverse=True)
     if not all_date_sheets:
         print("尚無每日交易資料，無法產生 alpha 分析。")
-        return
+        return {}
 
     # Determine max sheets needed
     max_needed = max(config.alpha_insti_days_long, config.bb_narrow_long_days)
@@ -91,9 +94,17 @@ def build_alpha_sheets_batch(
         else:
             print(f"跳過 {max_date_str}：無符合條件的股票")
 
+    # Build return value: date_str -> set of picked symbols
+    alpha_symbols: dict[str, set[str]] = {}
+    for sheet_name, df in results.items():
+        # sheet_name is like "alpha_2025-10-15", extract date part
+        date_str = sheet_name.split("_", 1)[1] if "_" in sheet_name else sheet_name
+        if "symbol" in df.columns:
+            alpha_symbols[date_str] = set(df["symbol"].astype(str).str.strip())
+
     if not results:
         print("無分析結果可寫入。")
-        return
+        return alpha_symbols
 
     # Write all results at once
     print(f"寫入 {len(results)} 個 sheets 到 {alpha_file}...")
@@ -115,6 +126,8 @@ def build_alpha_sheets_batch(
 
     # Update summary sheet using in-memory data (no re-read)
     build_summary_sheet(alpha_file, sheets_data=all_sheets)
+
+    return alpha_symbols
 
 
 def _analyze_date(
@@ -171,7 +184,7 @@ def build_alpha_sheet(
     max_date: dt.date | None = None,
     sheet_prefix: str = "alpha",
     preloaded_xls: pd.ExcelFile | None = None,
-) -> None:
+) -> set[str]:
     """Analyse recent trading data and write alpha picks to Excel.
 
     Args:
@@ -182,13 +195,16 @@ def build_alpha_sheet(
         max_date: If set, only consider sheets up to this date (for replay mode)
         sheet_prefix: Prefix for output sheet name (default: "alpha")
         preloaded_xls: Pre-loaded ExcelFile to avoid re-reading daily file
+
+    Returns:
+        Set of picked symbol strings (for sell exclusion).
     """
     if preloaded_xls is not None:
         xls = preloaded_xls
     else:
         if not daily_file.exists():
             print("尚無每日資料，無法產生 alpha 分析。")
-            return
+            return set()
         xls = pd.ExcelFile(daily_file)
 
     date_sheets = sorted(
@@ -197,7 +213,7 @@ def build_alpha_sheet(
     )
     if not date_sheets:
         print("尚無每日交易資料，無法產生 alpha 分析。")
-        return
+        return set()
 
     # Filter sheets by max_date if specified (for replay mode)
     if max_date is not None:
@@ -205,7 +221,7 @@ def build_alpha_sheet(
         date_sheets = [s for s in date_sheets if s <= max_date_str]
         if not date_sheets:
             print(f"無 {max_date_str} 及之前的交易資料。")
-            return
+            return set()
 
     long_n = config.alpha_insti_days_long
     short_n = config.alpha_insti_days_short
@@ -223,7 +239,7 @@ def build_alpha_sheet(
     latest_df = recent[latest_sheet]
     if "symbol" not in latest_df.columns:
         print("最新 sheet 缺少 symbol 欄位，無法分析。")
-        return
+        return set()
 
     # Pre-build symbol indices for fast lookup
     sym_indices: dict[str, dict[str, int]] = {}
@@ -250,9 +266,10 @@ def build_alpha_sheet(
 
     if not rows:
         print("未找到符合 alpha 條件的股票。")
-        return
+        return set()
 
     alpha_df = pd.DataFrame(rows)
+    picked_symbols = set(alpha_df["symbol"].astype(str).str.strip())
     sheet_name = f"{sheet_prefix}_{target_date.isoformat()}"
 
     if alpha_file.exists():
@@ -268,6 +285,8 @@ def build_alpha_sheet(
 
     # Update summary sheet
     build_summary_sheet(alpha_file)
+
+    return picked_symbols
 
 
 def _analyze_symbol(

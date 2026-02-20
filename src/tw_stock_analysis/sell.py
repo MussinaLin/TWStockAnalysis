@@ -10,6 +10,27 @@ import pandas as pd
 from .config import AppConfig
 
 
+def load_alpha_symbols(alpha_file: Path) -> dict[str, set[str]]:
+    """Load alpha pick symbols from Excel file.
+
+    Returns:
+        Dict mapping date string to set of picked symbols.
+    """
+    if not alpha_file.exists():
+        return {}
+
+    xls = pd.ExcelFile(alpha_file)
+    result: dict[str, set[str]] = {}
+    for sheet_name in xls.sheet_names:
+        if not (sheet_name.startswith("alpha_") or sheet_name.startswith("replay_")):
+            continue
+        date_str = sheet_name.split("_", 1)[1] if "_" in sheet_name else sheet_name
+        df = xls.parse(sheet_name)
+        if "symbol" in df.columns:
+            result[date_str] = set(df["symbol"].astype(str).str.strip())
+    return result
+
+
 def build_sell_sheet(
     config: AppConfig,
     target_date: dt.date,
@@ -18,6 +39,7 @@ def build_sell_sheet(
     max_date: dt.date | None = None,
     sheet_prefix: str = "sell",
     preloaded_xls: pd.ExcelFile | None = None,
+    exclude_symbols: set[str] | None = None,
 ) -> None:
     """Analyse recent trading data and write sell alerts to Excel.
 
@@ -78,6 +100,8 @@ def build_sell_sheet(
         sym_indices[s] = _build_symbol_index(df)
 
     symbols = list(sym_indices.get(latest_sheet, {}).keys())
+    if exclude_symbols:
+        symbols = [s for s in symbols if s not in exclude_symbols]
     latest_idx = sym_indices.get(latest_sheet, {})
 
     rows: list[dict] = []
@@ -118,6 +142,7 @@ def build_sell_sheets_batch(
     sell_file: Path,
     sheet_prefix: str = "sell",
     preloaded_data: dict[str, pd.DataFrame] | None = None,
+    exclude_symbols: dict[str, set[str]] | None = None,
 ) -> None:
     """Batch analyse multiple dates for sell alerts and write all results at once."""
     if not dates:
@@ -175,8 +200,13 @@ def build_sell_sheets_batch(
         needed_sheets = date_sheets[:max_needed]
         recent = {s: all_sheets_data[s] for s in needed_sheets if s in all_sheets_data}
 
+        # Get exclusion set for this date
+        date_exclude = None
+        if exclude_symbols:
+            date_exclude = exclude_symbols.get(max_date_str)
+
         # Analyze
-        sell_df = _analyze_date_sell(config, date_sheets, recent)
+        sell_df = _analyze_date_sell(config, date_sheets, recent, date_exclude)
         if sell_df is not None and not sell_df.empty:
             sheet_name = f"{sheet_prefix}_{max_date_str}"
             results[sheet_name] = sell_df
@@ -212,6 +242,7 @@ def _analyze_date_sell(
     config: AppConfig,
     date_sheets: list[str],
     recent: dict[str, pd.DataFrame],
+    exclude_symbols: set[str] | None = None,
 ) -> pd.DataFrame | None:
     """Analyze a single date for sell alerts using pre-loaded data."""
     if not date_sheets or not recent:
@@ -228,6 +259,8 @@ def _analyze_date_sell(
         sym_indices[s] = _build_symbol_index(df)
 
     symbols = list(sym_indices.get(latest_sheet, {}).keys())
+    if exclude_symbols:
+        symbols = [s for s in symbols if s not in exclude_symbols]
     latest_idx = sym_indices.get(latest_sheet, {})
 
     rows: list[dict] = []
