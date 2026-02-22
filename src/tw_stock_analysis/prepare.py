@@ -569,3 +569,47 @@ def prepare_moneydj_margin(df: pd.DataFrame) -> pd.DataFrame:
     result = result.dropna(subset=["date"])
 
     return result
+
+
+def prepare_moneydj_holding_pct(df: pd.DataFrame) -> pd.DataFrame:
+    """Prepare MoneyDJ institutional holding percentage data.
+
+    Input DataFrame from fetch_moneydj_holding_pct with columns:
+    date, foreign_holding_pct, insti_holding_pct
+
+    Returns DataFrame with parsed dates and percentages as decimals (e.g., 0.3503).
+    """
+    if "date" not in df.columns:
+        raise DataUnavailableError("MoneyDJ 法人持股欄位解析失敗，缺少 date")
+
+    result = pd.DataFrame()
+
+    def _parse_moneydj_date(val) -> dt.date | None:
+        if pd.isna(val):
+            return None
+        text = str(val).strip()
+        if not text:
+            return None
+        return _parse_roc_date(text)
+
+    result["date"] = df["date"].map(_parse_moneydj_date)
+
+    # Parse percentage strings like "35.03%" to decimal 0.3503
+    def _parse_pct_to_decimal(val):
+        if pd.isna(val):
+            return None
+        text = str(val).strip().replace("%", "")
+        try:
+            return round(float(text) / 100, 6)
+        except ValueError:
+            return None
+
+    for col in ["foreign_holding_pct", "insti_holding_pct"]:
+        if col in df.columns:
+            result[col] = df[col].map(_parse_pct_to_decimal)
+        else:
+            result[col] = None
+
+    result = result.dropna(subset=["date"])
+
+    return result

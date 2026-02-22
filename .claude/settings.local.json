@@ -24,7 +24,8 @@
       "Bash(pip install:*)",
       "Bash(python -m tw_stock_analysis.run:*)",
       "Bash(git stash:*)",
-      "Bash(git stash pop:*)"
+      "Bash(git stash pop:*)",
+      "WebFetch(domain:concords.moneydj.com)"
     ]
   }
 }

@@ -23,6 +23,7 @@ from .excel_utils import (
 )
 from .indicators import compute_bollinger_bands, compute_macd, compute_rsi
 from .prepare import (
+    prepare_moneydj_holding_pct,
     prepare_moneydj_margin,
     prepare_tpex_3insti,
     prepare_tpex_issued_shares,
@@ -36,6 +37,7 @@ from .prepare import (
 )
 from .sources import (
     DataUnavailableError,
+    fetch_moneydj_holding_pct,
     fetch_moneydj_margin,
     fetch_tpex_3insti_v2,
     fetch_tpex_company_basic,
@@ -305,6 +307,7 @@ def _build_daily_rows(
     twse_margin: pd.DataFrame | None = None,
     tpex_margin: pd.DataFrame | None = None,
     margin_cache: dict[str, dict[dt.date, dict]] | None = None,
+    holding_pct_cache: dict[str, dict[dt.date, dict]] | None = None,
 ) -> pd.DataFrame:
     """Build daily data rows for all holdings."""
     rows: list[dict] = []
@@ -388,6 +391,11 @@ def _build_daily_rows(
             if short_balance is not None:
                 short_margin_ratio = round(short_balance / margin_balance * 100, 2)
 
+        # Get holding percentage data from cache
+        holding_pct = {}
+        if holding_pct_cache is not None and symbol in holding_pct_cache:
+            holding_pct = holding_pct_cache[symbol].get(date, {})
+
         rows.append({
             "symbol": symbol,
             "name": name,
@@ -414,6 +422,8 @@ def _build_daily_rows(
             "short_balance": short_balance,
             "short_change": margin_data.get("short_change"),
             "short_margin_ratio": short_margin_ratio,
+            "foreign_holding_pct": holding_pct.get("foreign_holding_pct"),
+            "insti_holding_pct": holding_pct.get("insti_holding_pct"),
             "rsi_9": indicators["rsi_9"],
             "rsi_14": indicators["rsi_14"],
             "macd": indicators["macd"],
@@ -664,6 +674,46 @@ def _prefetch_margin_cache(
     return cache
 
 
+def _prefetch_holding_pct_cache(
+    session: requests.Session,
+    holdings: pd.DataFrame,
+    start_date: dt.date,
+    end_date: dt.date,
+) -> dict[str, dict[dt.date, dict]]:
+    """Pre-fetch institutional holding percentage for all stocks in date range.
+
+    Returns:
+        Dict mapping symbol -> date -> {"foreign_holding_pct": x, "insti_holding_pct": y}
+    """
+    cache: dict[str, dict[dt.date, dict]] = {}
+    total = len(holdings)
+
+    print(f"預取法人持股比重資料 {start_date} ~ {end_date}...")
+
+    for idx, item in holdings.iterrows():
+        symbol = str(item["symbol"]).strip()
+        print(f"  預取法人持股 {idx + 1}/{total} {symbol}")
+
+        cache[symbol] = {}
+        try:
+            raw = fetch_moneydj_holding_pct(session, symbol, start_date, end_date)
+            df = prepare_moneydj_holding_pct(raw)
+
+            for _, row in df.iterrows():
+                row_date = row["date"]
+                if not isinstance(row_date, dt.date):
+                    continue
+                cache[symbol][row_date] = {
+                    "foreign_holding_pct": row.get("foreign_holding_pct"),
+                    "insti_holding_pct": row.get("insti_holding_pct"),
+                }
+        except (DataUnavailableError, requests.RequestException) as exc:
+            print(f"    {symbol} 法人持股取得失敗：{exc}")
+
+    print(f"法人持股預取完成，共 {len(cache)} 檔股票")
+    return cache
+
+
 def _update_history(
     history: dict[str, pd.Series],
     symbol: str,
@@ -759,6 +809,7 @@ def _run_for_date(
     skip_existing: bool = False,
     issued_shares: dict[str, int] | None = None,
     margin_cache: dict[str, dict[dt.date, dict]] | None = None,
+    holding_pct_cache: dict[str, dict[dt.date, dict]] | None = None,
 ) -> bool:
     """Process data for a single date."""
     sheet_name = date.isoformat()
@@ -899,6 +950,25 @@ def _run_for_date(
             # Combine into a single DataFrame that works like twse_margin
             twse_margin = pd.DataFrame(margin_rows)
 
+    # Fetch holding percentage data (per-stock, when not using cache)
+    if holding_pct_cache is None:
+        holding_pct_cache = {}
+        for _, item in holdings.iterrows():
+            symbol = str(item["symbol"]).strip()
+            try:
+                raw = fetch_moneydj_holding_pct(session, symbol, date, date)
+                df = prepare_moneydj_holding_pct(raw)
+                holding_pct_cache[symbol] = {}
+                for _, row in df.iterrows():
+                    row_date = row["date"]
+                    if isinstance(row_date, dt.date):
+                        holding_pct_cache[symbol][row_date] = {
+                            "foreign_holding_pct": row.get("foreign_holding_pct"),
+                            "insti_holding_pct": row.get("insti_holding_pct"),
+                        }
+            except (DataUnavailableError, requests.RequestException):
+                pass
+
     # Build daily data
     output_df = _build_daily_rows(
         session=session,
@@ -918,6 +988,7 @@ def _run_for_date(
         twse_margin=twse_margin,
         tpex_margin=tpex_margin,
         margin_cache=margin_cache,
+        holding_pct_cache=holding_pct_cache,
     )
 
     if output_df.empty:
@@ -1072,6 +1143,9 @@ def main() -> None:
 
         # Pre-fetch margin data for all stocks in date range
         margin_cache = _prefetch_margin_cache(session, holdings, start_date, target_date)
+        holding_pct_cache = _prefetch_holding_pct_cache(
+            session, holdings, start_date, target_date,
+        )
 
         for date in backfill_dates:
             _run_for_date(
@@ -1080,6 +1154,7 @@ def main() -> None:
                 skip_existing=not args.force,
                 issued_shares=issued_shares,
                 margin_cache=margin_cache,
+                holding_pct_cache=holding_pct_cache,
             )
         ran_backfill = True
 
@@ -1099,6 +1174,9 @@ def main() -> None:
 
         # Pre-fetch margin data for all stocks in date range
         margin_cache = _prefetch_margin_cache(session, holdings, start_date, end_date)
+        holding_pct_cache = _prefetch_holding_pct_cache(
+            session, holdings, start_date, end_date,
+        )
 
         for date in backfill_dates:
             _run_for_date(
@@ -1107,6 +1185,7 @@ def main() -> None:
                 skip_existing=not args.force,
                 issued_shares=issued_shares,
                 margin_cache=margin_cache,
+                holding_pct_cache=holding_pct_cache,
             )
         ran_backfill = True
 

@@ -33,6 +33,7 @@ TPEX_COMPANY_BASIC_URL = "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O"
 TWSE_MARGIN_URL = "https://openapi.twse.com.tw/v1/exchangeReport/MI_MARGN"
 TPEX_MARGIN_URL = "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_margin_balance"
 MONEYDJ_MARGIN_URL = "https://concords.moneydj.com/z/zc/zcn/zcn.djhtm"
+MONEYDJ_HOLDING_URL = "https://concords.moneydj.com/z/zc/zcl/zcl.djhtm"
 
 
 class DataUnavailableError(RuntimeError):
@@ -743,5 +744,80 @@ def fetch_moneydj_margin(
     for idx, col_name in col_map.items():
         if idx < len(data_rows.columns):
             result[col_name] = data_rows.iloc[:, idx].values
+
+    return result
+
+
+def fetch_moneydj_holding_pct(
+    session: requests.Session,
+    symbol: str,
+    start: dt.date,
+    end: dt.date,
+) -> pd.DataFrame:
+    """Fetch institutional holding percentage from MoneyDJ for a single stock.
+
+    Args:
+        session: HTTP session
+        symbol: Stock symbol (e.g., "2330")
+        start: Start date
+        end: End date
+
+    Returns:
+        DataFrame with columns: date, foreign_holding_pct, insti_holding_pct
+        (percentage strings like "35.03%")
+    """
+    start_str = f"{start.year}-{start.month}-{start.day}"
+    end_str = f"{end.year}-{end.month}-{end.day}"
+
+    params = {"a": symbol, "c": start_str, "d": end_str}
+
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    response = session.get(MONEYDJ_HOLDING_URL, params=params, timeout=30, verify=False)
+    response.raise_for_status()
+
+    try:
+        tables = pd.read_html(io.StringIO(response.text))
+    except ValueError as exc:
+        raise DataUnavailableError(f"MoneyDJ 法人持股頁面解析失敗：{exc}") from exc
+
+    # Find the holding data table (11 columns, has header rows with 持股比重)
+    # Table structure:
+    # - Row 5: top-level headers (買賣超, 估計持股, 持股比重)
+    # - Row 6: sub-headers (日期, 外資, 投信, 自營商, ...)
+    # - Row 7+: data rows
+    target_table = None
+    for table in tables:
+        if len(table) < 8 or len(table.columns) < 11:
+            continue
+        row6 = table.iloc[6] if len(table) > 6 else None
+        if row6 is not None:
+            row6_str = " ".join(str(v) for v in row6.values if pd.notna(v))
+            if "日期" in row6_str and "外資" in row6_str:
+                target_table = table
+                break
+
+    if target_table is None:
+        raise DataUnavailableError("MoneyDJ 找不到法人持股表格")
+
+    data_rows = target_table.iloc[7:].copy()
+
+    def _is_valid_date_row(val):
+        if pd.isna(val):
+            return False
+        text = str(val).strip()
+        return bool(re.match(r"^\d{2,3}/\d{1,2}/\d{1,2}$", text))
+
+    valid_mask = data_rows.iloc[:, 0].apply(_is_valid_date_row)
+    data_rows = data_rows[valid_mask]
+
+    if data_rows.empty:
+        raise DataUnavailableError("MoneyDJ 法人持股無有效資料")
+
+    # Column mapping (0-indexed):
+    # 0: 日期, 9: 外資持股比重, 10: 三大法人持股比重
+    result = pd.DataFrame()
+    result["date"] = data_rows.iloc[:, 0].values
+    result["foreign_holding_pct"] = data_rows.iloc[:, 9].values
+    result["insti_holding_pct"] = data_rows.iloc[:, 10].values
 
     return result
