@@ -1191,12 +1191,14 @@ def main() -> None:
 
     # Single date mode
     if not ran_backfill:
-        _run_for_date(
+        wrote = _run_for_date(
             session, target_date, holdings, history, volume_history, turnover_history,
             sheet_names, twse_month_cache, config, today,
             skip_existing=False,
             issued_shares=issued_shares,
         )
+        if not wrote:
+            return
 
     # Generate alpha analysis
     alpha_picked = build_alpha_sheet(config, target_date, OUTPUT_FILE, ALPHA_FILE)
