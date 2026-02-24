@@ -186,6 +186,7 @@ Alpha 選股分析結果。
 | 條件 | 說明 |
 |------|------|
 | cond_insti | 法人加碼：近期淨買超 > 長期平均（必須） |
+| cond_insti_bullish | 法人看好：當日買超 → True；當日賣超但賣壓減緩（< ratio × 近 N 日均賣超）→ True（必須） |
 | cond_vol_ma10 / cond_vol_ma20 | 量突破 10MA 或 20MA × N 倍（二擇一） |
 
 **選配條件**（至少 2 個成立）：

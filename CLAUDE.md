@@ -60,12 +60,13 @@ For each stock's daily price data, the system tries in order:
 ### Alpha Picking Conditions
 
 Selection logic:
-1. **Required**: cond_insti AND (cond_vol_ma10 OR cond_vol_ma20)
+1. **Required**: cond_insti AND cond_insti_bullish AND (cond_vol_ma10 OR cond_vol_ma20)
 2. **Optional** (at least 2 must be true): cond_rsi, cond_macd, cond_bb_narrow, cond_bb_near_upper
 
 | Condition | Type | Description |
 |-----------|------|-------------|
 | cond_insti | Required | Institutional net buy: recent avg > long-term avg |
+| cond_insti_bullish | Required | Institutional bullish: net > 0 (買超) or sell pressure easing (賣超 < ratio × avg recent sell) |
 | cond_vol_ma10 | Required (either) | Volume > 10MA × ratio |
 | cond_vol_ma20 | Required (either) | Volume > 20MA × ratio |
 | cond_rsi | Optional | RSI in healthy range (default 40-70) |
@@ -106,6 +107,7 @@ ALPHA_RSI_MAX=70
 ALPHA_MACD_HIST_MIN=0
 ALPHA_INSTI_DAYS_SHORT=15
 ALPHA_INSTI_DAYS_LONG=30
+ALPHA_INSTI_BULLISH_RATIO=0.8
 ```
 
 See `.env.example` for full documentation of all parameters.

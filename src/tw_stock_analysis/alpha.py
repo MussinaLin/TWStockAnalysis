@@ -415,10 +415,24 @@ def _analyze_symbol(
         and float(turnover_rate) > float(turnover_ma20) * config.turnover_surge_ratio
     )
 
+    # cond_insti_bullish: 法人看好（當天買超 or 賣壓減緩）
+    insti_today = insti_short[0] if insti_short else None
+    if insti_today is not None and insti_today > 0:
+        cond_insti_bullish = True
+    elif insti_today is not None and insti_today <= 0:
+        sell_days = [abs(v) for v in insti_short if v < 0]
+        if sell_days:
+            avg_sell = sum(sell_days) / len(sell_days)
+            cond_insti_bullish = abs(insti_today) < config.alpha_insti_bullish_ratio * avg_sell
+        else:
+            cond_insti_bullish = False
+    else:
+        cond_insti_bullish = False
+
     # Selection logic:
-    # 1. Required: cond_insti AND (cond_vol_ma10 OR cond_vol_ma20)
+    # 1. Required: cond_insti AND cond_insti_bullish AND (cond_vol_ma10 OR cond_vol_ma20)
     # 2. Optional: at least 2 of [cond_rsi, cond_macd, cond_bb_narrow, cond_bb_near_upper, cond_turnover_surge]
-    required_met = cond_insti and (cond_vol_ma10 or cond_vol_ma20)
+    required_met = cond_insti and cond_insti_bullish and (cond_vol_ma10 or cond_vol_ma20)
     optional_count = sum([cond_rsi, cond_macd, cond_bb_narrow, cond_bb_near_upper, cond_turnover_surge])
     optional_met = optional_count >= 2
 
@@ -434,6 +448,16 @@ def _analyze_symbol(
             f"日均{insti_short_avg:+,.0f} > "
             f"近{len(insti_long)}日均{insti_long_avg:+,.0f}"
         )
+    if cond_insti_bullish:
+        if insti_today is not None and insti_today > 0:
+            reasons.append(f"法人看好：當日買超 {insti_today:+,.0f}")
+        else:
+            sell_days_vals = [abs(v) for v in insti_short if v < 0]
+            avg_s = (sum(sell_days_vals) / len(sell_days_vals)) if sell_days_vals else 0
+            reasons.append(
+                f"法人看好：賣壓減緩 {abs(insti_today):,.0f}"
+                f" < {config.alpha_insti_bullish_ratio}×均賣超{avg_s:,.0f}"
+            )
     if cond_rsi:
         reasons.append(
             f"RSI 健康：{float(rsi):.1f}（區間 {config.alpha_rsi_min}-{config.alpha_rsi_max}）"
@@ -480,6 +504,7 @@ def _analyze_symbol(
         f"bb_bw_{bb_short_n}d_avg": round(bb_bw_short_avg, 4) if bb_bw_short_avg else None,
         f"bb_bw_{bb_long_n}d_avg": round(bb_bw_long_avg, 4) if bb_bw_long_avg else None,
         "cond_insti": cond_insti,
+        "cond_insti_bullish": cond_insti_bullish,
         "cond_rsi": cond_rsi,
         "cond_macd": cond_macd,
         "cond_vol_ma10": cond_vol_ma10,
